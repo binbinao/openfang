@@ -10,7 +10,7 @@ use openfang_types::model_catalog::{
     LMSTUDIO_BASE_URL, MINIMAX_BASE_URL, MISTRAL_BASE_URL, MOONSHOT_BASE_URL, OLLAMA_BASE_URL,
     LEMONADE_BASE_URL, OPENAI_BASE_URL, OPENROUTER_BASE_URL, PERPLEXITY_BASE_URL,
     QIANFAN_BASE_URL, QWEN_BASE_URL,
-    REPLICATE_BASE_URL, SAMBANOVA_BASE_URL, TOGETHER_BASE_URL, VENICE_BASE_URL, VLLM_BASE_URL,
+    REPLICATE_BASE_URL, SAMBANOVA_BASE_URL, TOGETHER_BASE_URL, VENICE_BASE_URL, VENUS_BASE_URL, VLLM_BASE_URL,
     VOLCENGINE_BASE_URL, VOLCENGINE_CODING_BASE_URL, XAI_BASE_URL, ZAI_BASE_URL,
     ZAI_CODING_BASE_URL, ZHIPU_BASE_URL, ZHIPU_CODING_BASE_URL,
 };
@@ -722,6 +722,16 @@ fn builtin_providers() -> Vec<ProviderInfo> {
             base_url: String::new(),
             key_required: false,
             auth_status: AuthStatus::NotRequired,
+            model_count: 0,
+        },
+        // ── Venus AI ──────────────────────────────────────────────
+        ProviderInfo {
+            id: "venus".into(),
+            display_name: "Venus".into(),
+            api_key_env: "VENUS_API_KEY".into(),
+            base_url: VENUS_BASE_URL.into(),
+            key_required: true,
+            auth_status: AuthStatus::Missing,
             model_count: 0,
         },
     ]
@@ -1867,15 +1877,15 @@ fn builtin_models() -> Vec<ModelCatalogEntry> {
             aliases: vec![],
         },
         // ══════════════════════════════════════════════════════════════
-        // Ollama (6) — local, no key required + dynamic discovery
+        // Ollama (4) — local Qwen 3.5 family, no key required + dynamic discovery
         // ══════════════════════════════════════════════════════════════
         ModelCatalogEntry {
-            id: "llama3.2".into(),
-            display_name: "Llama 3.2 (Ollama)".into(),
+            id: "qwen3.5:9b".into(),
+            display_name: "Qwen 3.5 9B (Ollama)".into(),
             provider: "ollama".into(),
             tier: ModelTier::Local,
-            context_window: 128_000,
-            max_output_tokens: 4_096,
+            context_window: 131_072,
+            max_output_tokens: 8_192,
             input_cost_per_m: 0.0,
             output_cost_per_m: 0.0,
             supports_tools: true,
@@ -1884,12 +1894,12 @@ fn builtin_models() -> Vec<ModelCatalogEntry> {
             aliases: vec![],
         },
         ModelCatalogEntry {
-            id: "llama3.1".into(),
-            display_name: "Llama 3.1 (Ollama)".into(),
+            id: "qwen3.5:4b".into(),
+            display_name: "Qwen 3.5 4B (Ollama)".into(),
             provider: "ollama".into(),
             tier: ModelTier::Local,
-            context_window: 128_000,
-            max_output_tokens: 4_096,
+            context_window: 131_072,
+            max_output_tokens: 8_192,
             input_cost_per_m: 0.0,
             output_cost_per_m: 0.0,
             supports_tools: true,
@@ -1898,12 +1908,12 @@ fn builtin_models() -> Vec<ModelCatalogEntry> {
             aliases: vec![],
         },
         ModelCatalogEntry {
-            id: "mistral:latest".into(),
-            display_name: "Mistral (Ollama)".into(),
+            id: "qwen3.5:27b".into(),
+            display_name: "Qwen 3.5 27B (Ollama)".into(),
             provider: "ollama".into(),
             tier: ModelTier::Local,
-            context_window: 32_768,
-            max_output_tokens: 4_096,
+            context_window: 131_072,
+            max_output_tokens: 8_192,
             input_cost_per_m: 0.0,
             output_cost_per_m: 0.0,
             supports_tools: true,
@@ -1912,43 +1922,15 @@ fn builtin_models() -> Vec<ModelCatalogEntry> {
             aliases: vec![],
         },
         ModelCatalogEntry {
-            id: "qwen2.5".into(),
-            display_name: "Qwen 2.5 (Ollama)".into(),
+            id: "qwen3.5:35b".into(),
+            display_name: "Qwen 3.5 35B MoE (Ollama)".into(),
             provider: "ollama".into(),
             tier: ModelTier::Local,
-            context_window: 32_768,
-            max_output_tokens: 4_096,
+            context_window: 131_072,
+            max_output_tokens: 8_192,
             input_cost_per_m: 0.0,
             output_cost_per_m: 0.0,
             supports_tools: true,
-            supports_vision: false,
-            supports_streaming: true,
-            aliases: vec![],
-        },
-        ModelCatalogEntry {
-            id: "phi3".into(),
-            display_name: "Phi-3 (Ollama)".into(),
-            provider: "ollama".into(),
-            tier: ModelTier::Local,
-            context_window: 128_000,
-            max_output_tokens: 4_096,
-            input_cost_per_m: 0.0,
-            output_cost_per_m: 0.0,
-            supports_tools: false,
-            supports_vision: false,
-            supports_streaming: true,
-            aliases: vec![],
-        },
-        ModelCatalogEntry {
-            id: "deepseek-r1:latest".into(),
-            display_name: "DeepSeek R1 (Ollama)".into(),
-            provider: "ollama".into(),
-            tier: ModelTier::Local,
-            context_window: 64_000,
-            max_output_tokens: 4_096,
-            input_cost_per_m: 0.0,
-            output_cost_per_m: 0.0,
-            supports_tools: false,
             supports_vision: false,
             supports_streaming: true,
             aliases: vec![],
@@ -3237,6 +3219,107 @@ fn builtin_models() -> Vec<ModelCatalogEntry> {
             supports_streaming: true,
             aliases: vec![],
         },
+        // ══════════════════════════════════════════════════════════════
+        // Venus (7) — internal LLM proxy aggregating multiple providers
+        // ══════════════════════════════════════════════════════════════
+        ModelCatalogEntry {
+            id: "glm-5".into(),
+            display_name: "GLM-5 (Venus)".into(),
+            provider: "venus".into(),
+            tier: ModelTier::Frontier,
+            context_window: 128_000,
+            max_output_tokens: 16_384,
+            input_cost_per_m: 0.0,
+            output_cost_per_m: 0.0,
+            supports_tools: true,
+            supports_vision: true,
+            supports_streaming: true,
+            aliases: vec![],
+        },
+        ModelCatalogEntry {
+            id: "glm-4.7".into(),
+            display_name: "GLM-4.7 (Venus)".into(),
+            provider: "venus".into(),
+            tier: ModelTier::Smart,
+            context_window: 128_000,
+            max_output_tokens: 16_384,
+            input_cost_per_m: 0.0,
+            output_cost_per_m: 0.0,
+            supports_tools: true,
+            supports_vision: true,
+            supports_streaming: true,
+            aliases: vec![],
+        },
+        ModelCatalogEntry {
+            id: "kimi-2.5".into(),
+            display_name: "Kimi 2.5 (Venus)".into(),
+            provider: "venus".into(),
+            tier: ModelTier::Smart,
+            context_window: 128_000,
+            max_output_tokens: 16_384,
+            input_cost_per_m: 0.0,
+            output_cost_per_m: 0.0,
+            supports_tools: true,
+            supports_vision: true,
+            supports_streaming: true,
+            aliases: vec![],
+        },
+        ModelCatalogEntry {
+            id: "minimax-m2.5".into(),
+            display_name: "MiniMax M2.5 (Venus)".into(),
+            provider: "venus".into(),
+            tier: ModelTier::Frontier,
+            context_window: 1_048_576,
+            max_output_tokens: 16_384,
+            input_cost_per_m: 0.0,
+            output_cost_per_m: 0.0,
+            supports_tools: true,
+            supports_vision: true,
+            supports_streaming: true,
+            aliases: vec![],
+        },
+        ModelCatalogEntry {
+            id: "qwen3.5-397b-a17b".into(),
+            display_name: "Qwen 3.5 397B A17B (Venus)".into(),
+            provider: "venus".into(),
+            tier: ModelTier::Frontier,
+            context_window: 131_072,
+            max_output_tokens: 16_384,
+            input_cost_per_m: 0.0,
+            output_cost_per_m: 0.0,
+            supports_tools: true,
+            supports_vision: false,
+            supports_streaming: true,
+            aliases: vec![],
+        },
+        ModelCatalogEntry {
+            id: "deepseek-v3.2".into(),
+            display_name: "DeepSeek V3.2 (Venus)".into(),
+            provider: "venus".into(),
+            tier: ModelTier::Frontier,
+            context_window: 128_000,
+            max_output_tokens: 16_384,
+            input_cost_per_m: 0.0,
+            output_cost_per_m: 0.0,
+            supports_tools: true,
+            supports_vision: false,
+            supports_streaming: true,
+            aliases: vec![],
+        },
+        ModelCatalogEntry {
+            id: "deepseek-v3.1-terminus".into(),
+            display_name: "DeepSeek V3.1 Terminus (Venus)".into(),
+            provider: "venus".into(),
+            tier: ModelTier::Smart,
+            context_window: 128_000,
+            max_output_tokens: 16_384,
+            input_cost_per_m: 0.0,
+            output_cost_per_m: 0.0,
+            supports_tools: true,
+            supports_vision: false,
+            supports_streaming: true,
+            aliases: vec![],
+        },
     ]
 }
 
@@ -3253,7 +3336,7 @@ mod tests {
     #[test]
     fn test_catalog_has_providers() {
         let catalog = ModelCatalog::new();
-        assert_eq!(catalog.list_providers().len(), 36);
+        assert_eq!(catalog.list_providers().len(), 37);
     }
 
     #[test]
@@ -3454,9 +3537,9 @@ mod tests {
     #[test]
     fn test_merge_skips_existing() {
         let mut catalog = ModelCatalog::new();
-        // "llama3.2" is already a builtin Ollama model
+        // "qwen3.5:9b" is already a builtin Ollama model
         let before = catalog.list_models().len();
-        catalog.merge_discovered_models("ollama", &["llama3.2".to_string()]);
+        catalog.merge_discovered_models("ollama", &["qwen3.5:9b".to_string()]);
         let after = catalog.list_models().len();
         assert_eq!(after, before); // no new model added
     }

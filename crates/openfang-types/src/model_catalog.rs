@@ -30,6 +30,7 @@ pub const HUGGINGFACE_BASE_URL: &str = "https://api-inference.huggingface.co/v1"
 pub const XAI_BASE_URL: &str = "https://api.x.ai/v1";
 pub const REPLICATE_BASE_URL: &str = "https://api.replicate.com/v1";
 pub const VENICE_BASE_URL: &str = "https://api.venice.ai/api/v1";
+pub const VENUS_BASE_URL: &str = "http://v2.open.venus.oa.com/llmproxy";
 
 // ── GitHub Copilot ──────────────────────────────────────────────
 pub const GITHUB_COPILOT_BASE_URL: &str = "https://api.githubcopilot.com";

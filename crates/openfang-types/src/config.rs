@@ -1065,6 +1065,12 @@ pub struct KernelConfig {
     /// OAuth client ID overrides for PKCE flows.
     #[serde(default)]
     pub oauth: OAuthConfig,
+    /// ClawHub mirror URL override for faster access in China.
+    /// Set to a full API base URL, e.g. `"https://skillhub.tencent.com/api/v1"`.
+    /// When set, all ClawHub requests use this mirror first, falling back to
+    /// the official `clawhub.ai` if the mirror fails.
+    #[serde(default)]
+    pub clawhub_mirror: Option<String>,
 }
 
 /// OAuth client ID overrides for PKCE flows.
@@ -1232,6 +1238,7 @@ impl Default for KernelConfig {
             budget: BudgetConfig::default(),
             provider_urls: HashMap::new(),
             oauth: OAuthConfig::default(),
+            clawhub_mirror: None,
         }
     }
 }

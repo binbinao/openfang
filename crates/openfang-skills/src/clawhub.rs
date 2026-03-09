@@ -225,29 +225,112 @@ pub struct ClawHubInstallResult {
 pub struct ClawHubClient {
     /// Base URL for the ClawHub API.
     base_url: String,
+    /// Optional fallback URL (original clawhub.ai when using a mirror as primary).
+    fallback_url: Option<String>,
     /// HTTP client.
     client: reqwest::Client,
     /// Local cache directory for downloaded skills.
     _cache_dir: PathBuf,
 }
 
+/// Default official ClawHub API URL.
+const CLAWHUB_OFFICIAL_URL: &str = "https://clawhub.ai/api/v1";
+
 impl ClawHubClient {
     /// Create a new ClawHub client with default settings.
     ///
     /// Uses the official ClawHub API at `https://clawhub.ai/api/v1`.
     pub fn new(cache_dir: PathBuf) -> Self {
-        Self::with_url("https://clawhub.ai/api/v1", cache_dir)
+        Self::with_url(CLAWHUB_OFFICIAL_URL, cache_dir)
     }
 
-    /// Create a ClawHub client with a custom API URL.
-    pub fn with_url(base_url: &str, cache_dir: PathBuf) -> Self {
+    /// Create a ClawHub client with a mirror URL as the primary endpoint.
+    ///
+    /// When the mirror is set, all requests go to the mirror first.
+    /// If the mirror fails (timeout, 5xx, connection error), the client
+    /// automatically retries against the official `clawhub.ai`.
+    pub fn with_mirror(mirror_url: &str, cache_dir: PathBuf) -> Self {
+        let mirror = mirror_url.trim_end_matches('/');
+        let is_official = mirror == CLAWHUB_OFFICIAL_URL
+            || mirror == "https://clawhub.ai/api/v1/";
         Self {
-            base_url: base_url.trim_end_matches('/').to_string(),
+            base_url: mirror.to_string(),
+            fallback_url: if is_official {
+                None
+            } else {
+                Some(CLAWHUB_OFFICIAL_URL.to_string())
+            },
             client: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(30))
                 .build()
                 .unwrap_or_default(),
             _cache_dir: cache_dir,
+        }
+    }
+
+    /// Create a ClawHub client with a custom API URL (no fallback).
+    pub fn with_url(base_url: &str, cache_dir: PathBuf) -> Self {
+        Self {
+            base_url: base_url.trim_end_matches('/').to_string(),
+            fallback_url: None,
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .unwrap_or_default(),
+            _cache_dir: cache_dir,
+        }
+    }
+
+    /// Make a GET request with automatic mirror→fallback retry.
+    ///
+    /// Tries the primary (mirror) URL first. If it fails with a transient
+    /// error (timeout, connection refused, 429, 5xx), retries once against
+    /// the fallback (official) URL.
+    async fn get_with_fallback(&self, path: &str) -> Result<reqwest::Response, SkillError> {
+        let primary_url = format!("{}{}", self.base_url, path);
+
+        let primary_result = self
+            .client
+            .get(&primary_url)
+            .header("User-Agent", "OpenFang/0.1")
+            .send()
+            .await;
+
+        match &primary_result {
+            Ok(resp) if resp.status().is_success() || resp.status().is_client_error() => {
+                // 2xx or 4xx (not 429) → use this response directly
+                if resp.status().as_u16() != 429 {
+                    return primary_result.map_err(|e| {
+                        SkillError::Network(format!("ClawHub request failed: {e}"))
+                    });
+                }
+                // 429 rate limited → fall through to fallback
+                info!(url = %primary_url, "Mirror returned 429, trying fallback");
+            }
+            Ok(resp) => {
+                // 5xx → fall through to fallback
+                info!(url = %primary_url, status = %resp.status(), "Mirror returned server error, trying fallback");
+            }
+            Err(e) => {
+                // Timeout / connection error → fall through to fallback
+                info!(url = %primary_url, error = %e, "Mirror unreachable, trying fallback");
+            }
+        }
+
+        // Try fallback if available
+        if let Some(fallback) = &self.fallback_url {
+            let fallback_url = format!("{}{}", fallback, path);
+            info!(url = %fallback_url, "Retrying with fallback URL");
+            self.client
+                .get(&fallback_url)
+                .header("User-Agent", "OpenFang/0.1")
+                .send()
+                .await
+                .map_err(|e| SkillError::Network(format!("ClawHub fallback also failed: {e}")))
+        } else {
+            // No fallback — return original error
+            primary_result
+                .map_err(|e| SkillError::Network(format!("ClawHub request failed: {e}")))
         }
     }
 
@@ -260,20 +343,13 @@ impl ClawHubClient {
         query: &str,
         limit: u32,
     ) -> Result<ClawHubSearchResponse, SkillError> {
-        let url = format!(
-            "{}/search?q={}&limit={}",
-            self.base_url,
+        let path = format!(
+            "/search?q={}&limit={}",
             urlencoded(query),
             limit.min(50)
         );
 
-        let response = self
-            .client
-            .get(&url)
-            .header("User-Agent", "OpenFang/0.1")
-            .send()
-            .await
-            .map_err(|e| SkillError::Network(format!("ClawHub search failed: {e}")))?;
+        let response = self.get_with_fallback(&path).await?;
 
         if !response.status().is_success() {
             return Err(SkillError::Network(format!(
@@ -299,24 +375,17 @@ impl ClawHubClient {
         limit: u32,
         cursor: Option<&str>,
     ) -> Result<ClawHubBrowseResponse, SkillError> {
-        let mut url = format!(
-            "{}/skills?limit={}&sort={}",
-            self.base_url,
+        let mut path = format!(
+            "/skills?limit={}&sort={}",
             limit.min(50),
             sort.as_str()
         );
 
         if let Some(c) = cursor {
-            url.push_str(&format!("&cursor={}", urlencoded(c)));
+            path.push_str(&format!("&cursor={}", urlencoded(c)));
         }
 
-        let response = self
-            .client
-            .get(&url)
-            .header("User-Agent", "OpenFang/0.1")
-            .send()
-            .await
-            .map_err(|e| SkillError::Network(format!("ClawHub browse failed: {e}")))?;
+        let response = self.get_with_fallback(&path).await?;
 
         if !response.status().is_success() {
             return Err(SkillError::Network(format!(
@@ -338,15 +407,9 @@ impl ClawHubClient {
     /// Uses `GET /api/v1/skills/{slug}`.
     /// Response is `{ skill: {...}, latestVersion: {...}, owner: {...}, moderation: null }`.
     pub async fn get_skill(&self, slug: &str) -> Result<ClawHubSkillDetail, SkillError> {
-        let url = format!("{}/skills/{}", self.base_url, urlencoded(slug));
+        let path = format!("/skills/{}", urlencoded(slug));
 
-        let response = self
-            .client
-            .get(&url)
-            .header("User-Agent", "OpenFang/0.1")
-            .send()
-            .await
-            .map_err(|e| SkillError::Network(format!("ClawHub detail failed: {e}")))?;
+        let response = self.get_with_fallback(&path).await?;
 
         if !response.status().is_success() {
             return Err(SkillError::Network(format!(
@@ -376,21 +439,14 @@ impl ClawHubClient {
     /// Fetch a specific file from a skill (e.g., SKILL.md, README).
     ///
     /// Uses `GET /api/v1/skills/{slug}/file?path=SKILL.md`.
-    pub async fn get_file(&self, slug: &str, path: &str) -> Result<String, SkillError> {
-        let url = format!(
-            "{}/skills/{}/file?path={}",
-            self.base_url,
+    pub async fn get_file(&self, slug: &str, file_path: &str) -> Result<String, SkillError> {
+        let path = format!(
+            "/skills/{}/file?path={}",
             urlencoded(slug),
-            urlencoded(path)
+            urlencoded(file_path)
         );
 
-        let response = self
-            .client
-            .get(&url)
-            .header("User-Agent", "OpenFang/0.1")
-            .send()
-            .await
-            .map_err(|e| SkillError::Network(format!("ClawHub file fetch failed: {e}")))?;
+        let response = self.get_with_fallback(&path).await?;
 
         if !response.status().is_success() {
             return Err(SkillError::Network(format!(
@@ -422,18 +478,12 @@ impl ClawHubClient {
         slug: &str,
         target_dir: &Path,
     ) -> Result<ClawHubInstallResult, SkillError> {
-        // Use /api/v1/download?slug=... endpoint
-        let url = format!("{}/download?slug={}", self.base_url, urlencoded(slug));
+        // Use /api/v1/download?slug=... endpoint with mirror fallback
+        let path = format!("/download?slug={}", urlencoded(slug));
 
         info!(slug, "Downloading skill from ClawHub");
 
-        let response = self
-            .client
-            .get(&url)
-            .header("User-Agent", "OpenFang/0.1")
-            .send()
-            .await
-            .map_err(|e| SkillError::Network(format!("ClawHub download failed: {e}")))?;
+        let response = self.get_with_fallback(&path).await?;
 
         if !response.status().is_success() {
             return Err(SkillError::Network(format!(
@@ -814,7 +864,29 @@ mod tests {
     #[test]
     fn test_clawhub_client_url() {
         let client = ClawHubClient::new(PathBuf::from("/tmp/cache"));
-        assert_eq!(client.base_url, "https://clawhub.ai/api/v1");
+        assert_eq!(client.base_url, CLAWHUB_OFFICIAL_URL);
+        assert!(client.fallback_url.is_none());
+    }
+
+    #[test]
+    fn test_clawhub_client_with_mirror() {
+        let client = ClawHubClient::with_mirror(
+            "https://skillhub.tencent.com/api/v1",
+            PathBuf::from("/tmp/cache"),
+        );
+        assert_eq!(client.base_url, "https://skillhub.tencent.com/api/v1");
+        assert_eq!(client.fallback_url.as_deref(), Some(CLAWHUB_OFFICIAL_URL));
+    }
+
+    #[test]
+    fn test_clawhub_client_mirror_same_as_official() {
+        // When mirror URL is the same as official, no fallback needed
+        let client = ClawHubClient::with_mirror(
+            "https://clawhub.ai/api/v1",
+            PathBuf::from("/tmp/cache"),
+        );
+        assert_eq!(client.base_url, CLAWHUB_OFFICIAL_URL);
+        assert!(client.fallback_url.is_none());
     }
 
     #[test]

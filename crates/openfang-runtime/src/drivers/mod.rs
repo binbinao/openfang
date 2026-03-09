@@ -18,7 +18,7 @@ use openfang_types::model_catalog::{
     LMSTUDIO_BASE_URL,
     MINIMAX_BASE_URL, MISTRAL_BASE_URL, MOONSHOT_BASE_URL, OLLAMA_BASE_URL, OPENAI_BASE_URL,
     OPENROUTER_BASE_URL, PERPLEXITY_BASE_URL, QIANFAN_BASE_URL, QWEN_BASE_URL,
-    REPLICATE_BASE_URL, SAMBANOVA_BASE_URL, TOGETHER_BASE_URL, VENICE_BASE_URL, VLLM_BASE_URL,
+    REPLICATE_BASE_URL, SAMBANOVA_BASE_URL, TOGETHER_BASE_URL, VENICE_BASE_URL, VENUS_BASE_URL, VLLM_BASE_URL,
     VOLCENGINE_BASE_URL, VOLCENGINE_CODING_BASE_URL, XAI_BASE_URL, ZAI_BASE_URL,
     ZAI_CODING_BASE_URL, ZHIPU_BASE_URL, ZHIPU_CODING_BASE_URL,
 };
@@ -203,6 +203,11 @@ fn provider_defaults(provider: &str) -> Option<ProviderDefaults> {
         "venice" => Some(ProviderDefaults {
             base_url: VENICE_BASE_URL,
             api_key_env: "VENICE_API_KEY",
+            key_required: true,
+        }),
+        "venus" => Some(ProviderDefaults {
+            base_url: VENUS_BASE_URL,
+            api_key_env: "VENUS_API_KEY",
             key_required: true,
         }),
         _ => None,
@@ -426,6 +431,7 @@ pub fn known_providers() -> &'static [&'static str] {
         "qianfan",
         "volcengine",
         "venice",
+        "venus",
         "codex",
         "claude-code",
     ]
@@ -521,11 +527,11 @@ mod tests {
         assert!(providers.contains(&"zhipu"));
         assert!(providers.contains(&"zhipu_coding"));
         assert!(providers.contains(&"qianfan"));
-        assert!(providers.contains(&"volcengine"));
+        assert!(providers.contains(&"venice"));
+        assert!(providers.contains(&"venus"));
         assert!(providers.contains(&"codex"));
         assert!(providers.contains(&"claude-code"));
-        assert_eq!(providers.len(), 31);
-    }
+        assert_eq!(providers.len(), 32);    }
 
     #[test]
     fn test_provider_defaults_perplexity() {
