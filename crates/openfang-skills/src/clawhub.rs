@@ -478,6 +478,7 @@ impl ClawHubClient {
         }
         let bytes = bytes_result
             .ok_or_else(|| SkillError::Network(format!("{last_err} (after 3 attempts)")))?;
+        let text = String::from_utf8_lossy(&bytes).to_string();
         Ok(text)
     }
 
@@ -501,15 +502,6 @@ impl ClawHubClient {
 
         info!(slug, "Downloading skill from ClawHub");
 
-<<<<<<< HEAD
-        let response = self.get_with_fallback(&path).await?;
-
-        if !response.status().is_success() {
-            return Err(SkillError::Network(format!(
-                "ClawHub download returned {}",
-                response.status()
-            )));
-=======
         // Retry with exponential backoff on 429/5xx
         let mut last_err = String::new();
         let mut bytes_result = None;
@@ -519,34 +511,26 @@ impl ClawHubClient {
                 tokio::time::sleep(delay).await;
                 info!(slug, attempt, "Retrying ClawHub download");
             }
-            match self
-                .client
-                .get(&url)
-                .header("User-Agent", "OpenFang/0.1")
-                .send()
-                .await
-            {
-                Ok(resp) if resp.status().is_success() => {
-                    match resp.bytes().await {
-                        Ok(b) => {
-                            bytes_result = Some(b);
-                            break;
-                        }
-                        Err(e) => last_err = format!("Failed to read download: {e}"),
-                    }
+            let response = self.get_with_fallback(&path).await?;
+
+            if !response.status().is_success() {
+                if response.status().as_u16() == 429 || response.status().is_server_error() {
+                    last_err = format!("ClawHub download returned {}", response.status());
+                    continue;
                 }
-                Ok(resp) if resp.status().as_u16() == 429 || resp.status().is_server_error() => {
-                    last_err = format!("ClawHub download returned {}", resp.status());
-                }
-                Ok(resp) => {
-                    return Err(SkillError::Network(format!(
-                        "ClawHub download returned {}",
-                        resp.status()
-                    )));
-                }
-                Err(e) => last_err = format!("ClawHub download failed: {e}"),
+                return Err(SkillError::Network(format!(
+                    "ClawHub download returned {}",
+                    response.status()
+                )));
             }
->>>>>>> origin/main
+
+            match response.bytes().await {
+                Ok(b) => {
+                    bytes_result = Some(b);
+                    break;
+                }
+                Err(e) => last_err = format!("Failed to read download: {e}"),
+            }
         }
         let bytes = bytes_result
             .ok_or_else(|| SkillError::Network(format!("{last_err} (after 3 attempts)")))?;
