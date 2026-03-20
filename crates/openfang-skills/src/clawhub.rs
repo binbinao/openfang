@@ -17,20 +17,7 @@ use crate::SkillError;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use tracing::{debug, info, warn};
-
-// ---------------------------------------------------------------------------
-// Retry constants for ClawHub API rate-limit handling
-// ---------------------------------------------------------------------------
-
-/// Maximum number of retry attempts for ClawHub API calls (including the first try).
-const MAX_RETRIES: u32 = 5;
-
-/// Base delay in milliseconds for exponential backoff (doubles each attempt).
-const BASE_DELAY_MS: u64 = 1_500;
-
-/// Maximum delay cap in milliseconds.
-const MAX_DELAY_MS: u64 = 30_000;
+use tracing::{info, warn};
 
 // ---------------------------------------------------------------------------
 // API response types (matching actual ClawHub v1 API — verified Feb 2026)
@@ -238,24 +225,41 @@ pub struct ClawHubInstallResult {
 pub struct ClawHubClient {
     /// Base URL for the ClawHub API.
     base_url: String,
+    /// Optional fallback URL (original clawhub.ai when using a mirror as primary).
+    fallback_url: Option<String>,
     /// HTTP client.
     client: reqwest::Client,
     /// Local cache directory for downloaded skills.
     _cache_dir: PathBuf,
 }
 
+/// Default official ClawHub API URL.
+const CLAWHUB_OFFICIAL_URL: &str = "https://clawhub.ai/api/v1";
+
 impl ClawHubClient {
     /// Create a new ClawHub client with default settings.
     ///
     /// Uses the official ClawHub API at `https://clawhub.ai/api/v1`.
     pub fn new(cache_dir: PathBuf) -> Self {
-        Self::with_url("https://clawhub.ai/api/v1", cache_dir)
+        Self::with_url(CLAWHUB_OFFICIAL_URL, cache_dir)
     }
 
-    /// Create a ClawHub client with a custom API URL.
-    pub fn with_url(base_url: &str, cache_dir: PathBuf) -> Self {
+    /// Create a ClawHub client with a mirror URL as the primary endpoint.
+    ///
+    /// When the mirror is set, all requests go to the mirror first.
+    /// If the mirror fails (timeout, 5xx, connection error), the client
+    /// automatically retries against the official `clawhub.ai`.
+    pub fn with_mirror(mirror_url: &str, cache_dir: PathBuf) -> Self {
+        let mirror = mirror_url.trim_end_matches('/');
+        let is_official = mirror == CLAWHUB_OFFICIAL_URL
+            || mirror == "https://clawhub.ai/api/v1/";
         Self {
-            base_url: base_url.trim_end_matches('/').to_string(),
+            base_url: mirror.to_string(),
+            fallback_url: if is_official {
+                None
+            } else {
+                Some(CLAWHUB_OFFICIAL_URL.to_string())
+            },
             client: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(30))
                 .build()
@@ -264,126 +268,71 @@ impl ClawHubClient {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Private: HTTP GET with retry on 429 / 5xx
-    // -----------------------------------------------------------------------
+    /// Create a ClawHub client with a custom API URL (no fallback).
+    pub fn with_url(base_url: &str, cache_dir: PathBuf) -> Self {
+        Self {
+            base_url: base_url.trim_end_matches('/').to_string(),
+            fallback_url: None,
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .unwrap_or_default(),
+            _cache_dir: cache_dir,
+        }
+    }
 
-    /// Issue a GET request with automatic retry on rate-limit (429) and
-    /// server-error (5xx) responses. Respects the `Retry-After` header
-    /// when present, otherwise uses exponential backoff with jitter.
+    /// Make a GET request with automatic mirror→fallback retry.
     ///
-    /// Returns the successful `reqwest::Response` or a `SkillError`.
-    async fn get_with_retry(
-        &self,
-        url: &str,
-        context: &str,
-    ) -> Result<reqwest::Response, SkillError> {
-        let mut last_status: Option<u16> = None;
+    /// Tries the primary (mirror) URL first. If it fails with a transient
+    /// error (timeout, connection refused, 429, 5xx), retries once against
+    /// the fallback (official) URL.
+    async fn get_with_fallback(&self, path: &str) -> Result<reqwest::Response, SkillError> {
+        let primary_url = format!("{}{}", self.base_url, path);
 
-        for attempt in 0..MAX_RETRIES {
-            if attempt > 0 {
-                // Compute delay: use Retry-After from previous response if we
-                // saved it, otherwise exponential backoff with jitter.
-                let base = BASE_DELAY_MS.saturating_mul(1u64 << attempt.min(5));
-                let delay_ms = base.min(MAX_DELAY_MS);
-                // Add light jitter (0-25%) using system clock nanos.
-                let jitter = {
-                    let nanos = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .subsec_nanos();
-                    let frac = (nanos.wrapping_mul(2654435761) as f64) / (u32::MAX as f64);
-                    (delay_ms as f64 * frac * 0.25) as u64
-                };
-                let total = delay_ms + jitter;
-                debug!(
-                    attempt,
-                    delay_ms = total,
-                    context,
-                    "retrying ClawHub request after rate limit / server error"
-                );
-                tokio::time::sleep(std::time::Duration::from_millis(total)).await;
+        let primary_result = self
+            .client
+            .get(&primary_url)
+            .header("User-Agent", "OpenFang/0.1")
+            .send()
+            .await;
+
+        match &primary_result {
+            Ok(resp) if resp.status().is_success() || resp.status().is_client_error() => {
+                // 2xx or 4xx (not 429) → use this response directly
+                if resp.status().as_u16() != 429 {
+                    return primary_result.map_err(|e| {
+                        SkillError::Network(format!("ClawHub request failed: {e}"))
+                    });
+                }
+                // 429 rate limited → fall through to fallback
+                info!(url = %primary_url, "Mirror returned 429, trying fallback");
             }
-
-            let result = self
-                .client
-                .get(url)
-                .header("User-Agent", "OpenFang/0.1")
-                .send()
-                .await;
-
-            match result {
-                Ok(resp) => {
-                    let status = resp.status();
-
-                    if status.is_success() {
-                        return Ok(resp);
-                    }
-
-                    // Rate-limited or server error — retryable.
-                    if status.as_u16() == 429 || status.is_server_error() {
-                        last_status = Some(status.as_u16());
-
-                        // If the server sent Retry-After, respect it (capped).
-                        if let Some(ra) = resp
-                            .headers()
-                            .get("retry-after")
-                            .and_then(|v| v.to_str().ok())
-                            .and_then(|v| v.parse::<u64>().ok())
-                        {
-                            let capped = (ra * 1000).min(MAX_DELAY_MS);
-                            if attempt + 1 < MAX_RETRIES {
-                                debug!(
-                                    retry_after_secs = ra,
-                                    "ClawHub sent Retry-After, sleeping {capped}ms"
-                                );
-                                tokio::time::sleep(std::time::Duration::from_millis(capped)).await;
-                            }
-                        }
-
-                        let is_last = attempt + 1 >= MAX_RETRIES;
-                        if is_last {
-                            if status.as_u16() == 429 {
-                                return Err(SkillError::RateLimited(format!(
-                                    "{context} returned 429 Too Many Requests after {MAX_RETRIES} attempts \
-                                     — the ClawHub API rate limit has been exceeded, \
-                                     please wait a few seconds and try again"
-                                )));
-                            }
-                            return Err(SkillError::Network(format!(
-                                "{context} returned {status} after {MAX_RETRIES} attempts"
-                            )));
-                        }
-                        // Loop around to retry.
-                        continue;
-                    }
-
-                    // Non-retryable HTTP error (4xx other than 429).
-                    return Err(SkillError::Network(format!("{context} returned {status}")));
-                }
-                Err(e) => {
-                    // Network / timeout error — retryable.
-                    last_status = None;
-                    let is_last = attempt + 1 >= MAX_RETRIES;
-                    if is_last {
-                        return Err(SkillError::Network(format!(
-                            "{context} failed after {MAX_RETRIES} attempts: {e}"
-                        )));
-                    }
-                    warn!(attempt, context, error = %e, "ClawHub request failed, will retry");
-                }
+            Ok(resp) => {
+                // 5xx → fall through to fallback
+                info!(url = %primary_url, status = %resp.status(), "Mirror returned server error, trying fallback");
+            }
+            Err(e) => {
+                // Timeout / connection error → fall through to fallback
+                info!(url = %primary_url, error = %e, "Mirror unreachable, trying fallback");
             }
         }
 
-        // Should be unreachable, but handle gracefully.
-        Err(SkillError::Network(format!(
-            "{context} failed (status: {last_status:?}) after {MAX_RETRIES} attempts"
-        )))
+        // Try fallback if available
+        if let Some(fallback) = &self.fallback_url {
+            let fallback_url = format!("{}{}", fallback, path);
+            info!(url = %fallback_url, "Retrying with fallback URL");
+            self.client
+                .get(&fallback_url)
+                .header("User-Agent", "OpenFang/0.1")
+                .send()
+                .await
+                .map_err(|e| SkillError::Network(format!("ClawHub fallback also failed: {e}")))
+        } else {
+            // No fallback — return original error
+            primary_result
+                .map_err(|e| SkillError::Network(format!("ClawHub request failed: {e}")))
+        }
     }
-
-    // -----------------------------------------------------------------------
-    // Public API methods — all use get_with_retry
-    // -----------------------------------------------------------------------
 
     /// Search for skills on ClawHub using vector/semantic search.
     ///
@@ -394,14 +343,20 @@ impl ClawHubClient {
         query: &str,
         limit: u32,
     ) -> Result<ClawHubSearchResponse, SkillError> {
-        let url = format!(
-            "{}/search?q={}&limit={}",
-            self.base_url,
+        let path = format!(
+            "/search?q={}&limit={}",
             urlencoded(query),
             limit.min(50)
         );
 
-        let response = self.get_with_retry(&url, "ClawHub search").await?;
+        let response = self.get_with_fallback(&path).await?;
+
+        if !response.status().is_success() {
+            return Err(SkillError::Network(format!(
+                "ClawHub API returned {}",
+                response.status()
+            )));
+        }
 
         let results: ClawHubSearchResponse = response
             .json()
@@ -420,18 +375,24 @@ impl ClawHubClient {
         limit: u32,
         cursor: Option<&str>,
     ) -> Result<ClawHubBrowseResponse, SkillError> {
-        let mut url = format!(
-            "{}/skills?limit={}&sort={}",
-            self.base_url,
+        let mut path = format!(
+            "/skills?limit={}&sort={}",
             limit.min(50),
             sort.as_str()
         );
 
         if let Some(c) = cursor {
-            url.push_str(&format!("&cursor={}", urlencoded(c)));
+            path.push_str(&format!("&cursor={}", urlencoded(c)));
         }
 
-        let response = self.get_with_retry(&url, "ClawHub browse").await?;
+        let response = self.get_with_fallback(&path).await?;
+
+        if !response.status().is_success() {
+            return Err(SkillError::Network(format!(
+                "ClawHub browse returned {}",
+                response.status()
+            )));
+        }
 
         let results: ClawHubBrowseResponse = response
             .json()
@@ -446,9 +407,16 @@ impl ClawHubClient {
     /// Uses `GET /api/v1/skills/{slug}`.
     /// Response is `{ skill: {...}, latestVersion: {...}, owner: {...}, moderation: null }`.
     pub async fn get_skill(&self, slug: &str) -> Result<ClawHubSkillDetail, SkillError> {
-        let url = format!("{}/skills/{}", self.base_url, urlencoded(slug));
+        let path = format!("/skills/{}", urlencoded(slug));
 
-        let response = self.get_with_retry(&url, "ClawHub skill detail").await?;
+        let response = self.get_with_fallback(&path).await?;
+
+        if !response.status().is_success() {
+            return Err(SkillError::Network(format!(
+                "ClawHub detail returned {}",
+                response.status()
+            )));
+        }
 
         let detail: ClawHubSkillDetail = response
             .json()
@@ -471,21 +439,46 @@ impl ClawHubClient {
     /// Fetch a specific file from a skill (e.g., SKILL.md, README).
     ///
     /// Uses `GET /api/v1/skills/{slug}/file?path=SKILL.md`.
-    pub async fn get_file(&self, slug: &str, path: &str) -> Result<String, SkillError> {
-        let url = format!(
-            "{}/skills/{}/file?path={}",
-            self.base_url,
+    pub async fn get_file(&self, slug: &str, file_path: &str) -> Result<String, SkillError> {
+        let path = format!(
+            "/skills/{}/file?path={}",
             urlencoded(slug),
-            urlencoded(path)
+            urlencoded(file_path)
         );
 
-        let response = self.get_with_retry(&url, "ClawHub file fetch").await?;
+        // Retry with exponential backoff on 429/5xx
+        let mut last_err = String::new();
+        let mut bytes_result = None;
+        for attempt in 0..3u32 {
+            if attempt > 0 {
+                let delay = std::time::Duration::from_millis(1000 * 2u64.pow(attempt));
+                tokio::time::sleep(delay).await;
+                info!(slug, attempt, "Retrying ClawHub download");
+            }
+            let response = self.get_with_fallback(&path).await?;
 
-        let text = response
-            .text()
-            .await
-            .map_err(|e| SkillError::Network(format!("Failed to read ClawHub file: {e}")))?;
+            if !response.status().is_success() {
+                if response.status().as_u16() == 429 || response.status().is_server_error() {
+                    last_err = format!("ClawHub download returned {}", response.status());
+                    continue;
+                }
+                return Err(SkillError::Network(format!(
+                    "ClawHub download returned {}",
+                    response.status()
+                )));
+            }
 
+            match response.bytes().await {
+                Ok(b) => {
+                    bytes_result = Some(b);
+                    break;
+                }
+                Err(e) => last_err = format!("Failed to read download: {e}"),
+            }
+        }
+        let bytes = bytes_result
+            .ok_or_else(|| SkillError::Network(format!("{last_err} (after 3 attempts)")))?;
+        let text = String::from_utf8_lossy(&bytes).to_string();
         Ok(text)
     }
 
@@ -504,18 +497,43 @@ impl ClawHubClient {
         slug: &str,
         target_dir: &Path,
     ) -> Result<ClawHubInstallResult, SkillError> {
-        // Use /api/v1/download?slug=... endpoint
-        let url = format!("{}/download?slug={}", self.base_url, urlencoded(slug));
+        // Use /api/v1/download?slug=... endpoint with mirror fallback
+        let path = format!("/download?slug={}", urlencoded(slug));
 
         info!(slug, "Downloading skill from ClawHub");
 
-        // Use get_with_retry for the download — same 429/5xx handling as all
-        // other endpoints, with 5 attempts and exponential backoff.
-        let response = self.get_with_retry(&url, "ClawHub download").await?;
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|e| SkillError::Network(format!("Failed to read download body: {e}")))?;
+        // Retry with exponential backoff on 429/5xx
+        let mut last_err = String::new();
+        let mut bytes_result = None;
+        for attempt in 0..3u32 {
+            if attempt > 0 {
+                let delay = std::time::Duration::from_millis(1000 * 2u64.pow(attempt));
+                tokio::time::sleep(delay).await;
+                info!(slug, attempt, "Retrying ClawHub download");
+            }
+            let response = self.get_with_fallback(&path).await?;
+
+            if !response.status().is_success() {
+                if response.status().as_u16() == 429 || response.status().is_server_error() {
+                    last_err = format!("ClawHub download returned {}", response.status());
+                    continue;
+                }
+                return Err(SkillError::Network(format!(
+                    "ClawHub download returned {}",
+                    response.status()
+                )));
+            }
+
+            match response.bytes().await {
+                Ok(b) => {
+                    bytes_result = Some(b);
+                    break;
+                }
+                Err(e) => last_err = format!("Failed to read download: {e}"),
+            }
+        }
+        let bytes = bytes_result
+            .ok_or_else(|| SkillError::Network(format!("{last_err} (after 3 attempts)")))?;
 
         // Step 1: SHA256 of downloaded content
         let sha256 = {
@@ -884,7 +902,29 @@ mod tests {
     #[test]
     fn test_clawhub_client_url() {
         let client = ClawHubClient::new(PathBuf::from("/tmp/cache"));
-        assert_eq!(client.base_url, "https://clawhub.ai/api/v1");
+        assert_eq!(client.base_url, CLAWHUB_OFFICIAL_URL);
+        assert!(client.fallback_url.is_none());
+    }
+
+    #[test]
+    fn test_clawhub_client_with_mirror() {
+        let client = ClawHubClient::with_mirror(
+            "https://skillhub.tencent.com/api/v1",
+            PathBuf::from("/tmp/cache"),
+        );
+        assert_eq!(client.base_url, "https://skillhub.tencent.com/api/v1");
+        assert_eq!(client.fallback_url.as_deref(), Some(CLAWHUB_OFFICIAL_URL));
+    }
+
+    #[test]
+    fn test_clawhub_client_mirror_same_as_official() {
+        // When mirror URL is the same as official, no fallback needed
+        let client = ClawHubClient::with_mirror(
+            "https://clawhub.ai/api/v1",
+            PathBuf::from("/tmp/cache"),
+        );
+        assert_eq!(client.base_url, CLAWHUB_OFFICIAL_URL);
+        assert!(client.fallback_url.is_none());
     }
 
     #[test]

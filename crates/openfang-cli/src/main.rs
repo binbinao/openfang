@@ -1390,7 +1390,7 @@ fn detect_best_provider() -> (&'static str, &'static str, &'static str) {
     // Check if Ollama is running locally (no API key needed)
     if check_ollama_available() {
         ui::success("Detected Ollama running locally (no API key needed)");
-        return ("ollama", "OLLAMA_API_KEY", "llama3.2");
+        return ("ollama", "OLLAMA_API_KEY", "qwen3.5:9b");
     }
     ui::hint("No LLM provider API keys found");
     ui::hint("Groq offers a free tier: https://console.groq.com");

@@ -42,6 +42,16 @@ pub struct AppState {
     pub provider_probe_cache: openfang_runtime::provider_health::ProbeCache,
 }
 
+/// Create a ClawHub client, using the config mirror URL if set.
+fn make_clawhub_client(state: &AppState) -> openfang_skills::clawhub::ClawHubClient {
+    let cache_dir = state.kernel.config.home_dir.join(".cache").join("clawhub");
+    if let Some(mirror) = &state.kernel.config.clawhub_mirror {
+        openfang_skills::clawhub::ClawHubClient::with_mirror(mirror, cache_dir)
+    } else {
+        openfang_skills::clawhub::ClawHubClient::new(cache_dir)
+    }
+}
+
 /// POST /api/agents — Spawn a new agent.
 pub async fn spawn_agent(
     State(state): State<Arc<AppState>>,
@@ -3429,9 +3439,11 @@ pub async fn prometheus_metrics(State(state): State<Arc<AppState>>) -> impl Into
 
 /// GET /api/skills — List installed skills.
 pub async fn list_skills(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let skills_dir = state.kernel.config.home_dir.join("skills");
-    let mut registry = openfang_skills::registry::SkillRegistry::new(skills_dir);
-    let _ = registry.load_all();
+    let registry = state
+        .kernel
+        .skill_registry
+        .read()
+        .unwrap_or_else(|e| e.into_inner());
 
     let skills: Vec<serde_json::Value> = registry
         .list()
@@ -3526,6 +3538,40 @@ pub async fn uninstall_skill(
     }
 }
 
+/// PUT /api/skills/{name}/toggle — Enable or disable a skill.
+pub async fn toggle_skill(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let enabled = match body.get("enabled").and_then(|v| v.as_bool()) {
+        Some(e) => e,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Missing 'enabled' boolean field"})),
+            );
+        }
+    };
+
+    let mut registry = state
+        .kernel
+        .skill_registry
+        .write()
+        .unwrap_or_else(|e| e.into_inner());
+
+    match registry.set_enabled(&name, enabled) {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"status": "ok", "name": name, "enabled": enabled})),
+        ),
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": format!("{e}")})),
+        ),
+    }
+}
+
 /// GET /api/marketplace/search — Search the FangHub marketplace.
 pub async fn marketplace_search(
     Query(params): Query<HashMap<String, String>>,
@@ -3594,8 +3640,7 @@ pub async fn clawhub_search(
         }
     }
 
-    let cache_dir = state.kernel.config.home_dir.join(".cache").join("clawhub");
-    let client = openfang_skills::clawhub::ClawHubClient::new(cache_dir);
+    let client = make_clawhub_client(&state);
 
     let skills_dir = state.kernel.config.home_dir.join("skills");
     match client.search(&query, limit).await {
@@ -3674,8 +3719,7 @@ pub async fn clawhub_browse(
         }
     }
 
-    let cache_dir = state.kernel.config.home_dir.join(".cache").join("clawhub");
-    let client = openfang_skills::clawhub::ClawHubClient::new(cache_dir);
+    let client = make_clawhub_client(&state);
 
     let skills_dir = state.kernel.config.home_dir.join("skills");
     match client.browse(sort, limit, cursor).await {
@@ -3720,8 +3764,7 @@ pub async fn clawhub_skill_detail(
     State(state): State<Arc<AppState>>,
     Path(slug): Path<String>,
 ) -> impl IntoResponse {
-    let cache_dir = state.kernel.config.home_dir.join(".cache").join("clawhub");
-    let client = openfang_skills::clawhub::ClawHubClient::new(cache_dir);
+    let client = make_clawhub_client(&state);
 
     let skills_dir = state.kernel.config.home_dir.join("skills");
     let is_installed = client.is_installed(&slug, &skills_dir);
@@ -3784,8 +3827,7 @@ pub async fn clawhub_skill_code(
     State(state): State<Arc<AppState>>,
     Path(slug): Path<String>,
 ) -> impl IntoResponse {
-    let cache_dir = state.kernel.config.home_dir.join(".cache").join("clawhub");
-    let client = openfang_skills::clawhub::ClawHubClient::new(cache_dir);
+    let client = make_clawhub_client(&state);
 
     // Try to fetch SKILL.md first, then fallback to package.json
     let mut code = String::new();
@@ -3828,8 +3870,7 @@ pub async fn clawhub_install(
     Json(req): Json<crate::types::ClawHubInstallRequest>,
 ) -> impl IntoResponse {
     let skills_dir = state.kernel.config.home_dir.join("skills");
-    let cache_dir = state.kernel.config.home_dir.join(".cache").join("clawhub");
-    let client = openfang_skills::clawhub::ClawHubClient::new(cache_dir);
+    let client = make_clawhub_client(&state);
 
     // Check if already installed
     if client.is_installed(&req.slug, &skills_dir) {

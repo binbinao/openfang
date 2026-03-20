@@ -200,7 +200,7 @@ const PROVIDERS: &[ProviderInfo] = &[
         name: "ollama",
         display: "Ollama",
         env_var: "OLLAMA_API_KEY",
-        default_model: "llama3.2",
+        default_model: "qwen3.5:9b",
         needs_key: false,
         hint: "local",
     },
@@ -219,6 +219,14 @@ const PROVIDERS: &[ProviderInfo] = &[
         default_model: "local-model",
         needs_key: false,
         hint: "local",
+    },
+    ProviderInfo {
+        name: "venus",
+        display: "Venus",
+        env_var: "VENUS_API_KEY",
+        default_model: "deepseek-v3.2",
+        needs_key: true,
+        hint: "openai-compatible",
     },
 ];
 

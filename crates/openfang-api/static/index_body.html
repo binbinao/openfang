@@ -2228,7 +2228,7 @@
                       <span class="runtime-badge" :class="runtimeBadge(skill.runtime).cls" x-text="runtimeBadge(skill.runtime).text"></span>
                       <span class="badge" :class="sourceBadge(skill.source).cls" x-text="sourceBadge(skill.source).text" style="font-size:0.65rem"></span>
                     </div>
-                    <div class="toggle" :class="{ active: skill.enabled }" @click="skill.enabled = !skill.enabled"></div>
+                    <div class="toggle" :class="{ active: skill.enabled }" @click="toggleSkill(skill)"></div>
                   </div>
                   <div class="card-meta" x-text="skill.description"></div>
                   <div class="flex justify-between items-center mt-2">

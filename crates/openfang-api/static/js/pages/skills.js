@@ -261,6 +261,18 @@ function skillsPage() {
       this.installingSlug = null;
     },
 
+    // Toggle skill enabled/disabled
+    async toggleSkill(skill) {
+      var newState = !skill.enabled;
+      try {
+        await OpenFangAPI.put('/api/skills/' + encodeURIComponent(skill.name) + '/toggle', { enabled: newState });
+        skill.enabled = newState;
+        OpenFangToast.success('Skill "' + skill.name + '" ' + (newState ? 'enabled' : 'disabled'));
+      } catch(e) {
+        OpenFangToast.error('Failed to toggle skill: ' + (e.message || e));
+      }
+    },
+
     // Uninstall
     uninstallSkill: function(name) {
       var self = this;

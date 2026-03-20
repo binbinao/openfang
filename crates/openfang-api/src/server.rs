@@ -336,6 +336,10 @@ pub async fn build_router(
             axum::routing::post(routes::uninstall_skill),
         )
         .route(
+            "/api/skills/{name}/toggle",
+            axum::routing::put(routes::toggle_skill),
+        )
+        .route(
             "/api/marketplace/search",
             axum::routing::get(routes::marketplace_search),
         )

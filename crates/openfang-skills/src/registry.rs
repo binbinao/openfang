@@ -221,6 +221,17 @@ impl SkillRegistry {
         Ok(name)
     }
 
+    /// Enable or disable a skill by name.
+    pub fn set_enabled(&mut self, name: &str, enabled: bool) -> Result<(), SkillError> {
+        let skill = self
+            .skills
+            .get_mut(name)
+            .ok_or_else(|| SkillError::NotFound(name.to_string()))?;
+        skill.enabled = enabled;
+        info!("Skill '{}' {}", name, if enabled { "enabled" } else { "disabled" });
+        Ok(())
+    }
+
     /// Get an installed skill by name.
     pub fn get(&self, name: &str) -> Option<&InstalledSkill> {
         self.skills.get(name)
