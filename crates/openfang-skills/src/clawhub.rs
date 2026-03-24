@@ -1,15 +1,13 @@
-//! ClawHub marketplace client — search and install skills from clawhub.ai.
+//! ClawHub marketplace client — search and install skills from skillhub.tencent.com.
 //!
 //! ClawHub hosts 3,000+ community skills in both SKILL.md (prompt-only)
 //! and package.json (Node.js) formats. This client downloads, converts,
 //! and security-scans skills before installation.
 //!
-//! API reference: <https://clawhub.ai/api/v1/>
-//! - Search: `GET /api/v1/search?q=...&limit=20`
-//! - Browse: `GET /api/v1/skills?limit=20&sort=trending`
-//! - Detail: `GET /api/v1/skills/{slug}`
+//! API backend: <https://lightmake.site/api/>
+//! - Browse: `GET /api/skills?limit=20&sort=trending`
+//! - Top: `GET /api/skills/top`
 //! - Download: `GET /api/v1/download?slug=...`
-//! - File: `GET /api/v1/skills/{slug}/file?path=SKILL.md`
 
 use crate::openclaw_compat;
 use crate::verify::{SkillVerifier, SkillWarning, WarningSeverity};
@@ -20,12 +18,12 @@ use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
 // ---------------------------------------------------------------------------
-// API response types (matching actual ClawHub v1 API — verified Feb 2026)
+// API response types (matching lightmake.site API — verified Mar 2026)
 // ---------------------------------------------------------------------------
 
 // -- Shared nested types ---------------------------------------------------
 
-/// Stats nested inside browse entries and skill detail.
+/// Stats synthesized from the flat skill fields for backward compatibility.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClawHubStats {
@@ -69,12 +67,60 @@ pub struct ClawHubOwner {
     pub image: String,
 }
 
-// -- Browse: GET /api/v1/skills?limit=N&sort=trending ----------------------
+// -- Raw API response wrappers (lightmake.site envelope format) ------------
 
-/// A skill entry from the browse endpoint (`GET /api/v1/skills`).
+/// Raw skill entry as returned by the lightmake.site `/api/skills` endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RawSkillEntry {
+    pub slug: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub description_zh: String,
+    #[serde(default)]
+    pub category: String,
+    #[serde(default, alias = "ownerName")]
+    pub owner_name: String,
+    #[serde(default)]
+    pub downloads: u64,
+    #[serde(default)]
+    pub installs: u64,
+    #[serde(default)]
+    pub stars: u64,
+    #[serde(default)]
+    pub score: f64,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub homepage: String,
+    #[serde(default)]
+    pub updated_at: i64,
+    #[serde(default)]
+    pub tags: Option<serde_json::Value>,
+}
+
+/// Envelope for the `/api/skills` and `/api/skills/top` responses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RawSkillsEnvelope {
+    #[serde(default)]
+    pub code: i32,
+    #[serde(default)]
+    pub data: RawSkillsData,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RawSkillsData {
+    #[serde(default)]
+    pub skills: Vec<RawSkillEntry>,
+}
+
+// -- Browse: GET /api/skills?limit=N&sort=trending -------------------------
+
+/// A skill entry exposed to the rest of the codebase.
 ///
-/// Tags is a string→string map (e.g. `{"latest": "1.0.0"}`), not a list.
-/// Timestamps are Unix milliseconds.
+/// Mapped from the raw `RawSkillEntry` returned by lightmake.site.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClawHubBrowseEntry {
@@ -98,6 +144,39 @@ pub struct ClawHubBrowseEntry {
     pub latest_version: Option<ClawHubVersionInfo>,
 }
 
+impl From<RawSkillEntry> for ClawHubBrowseEntry {
+    fn from(raw: RawSkillEntry) -> Self {
+        let mut tags = std::collections::HashMap::new();
+        if !raw.version.is_empty() {
+            tags.insert("latest".to_string(), raw.version.clone());
+        }
+        Self {
+            slug: raw.slug,
+            display_name: raw.name,
+            summary: raw.description,
+            tags,
+            stats: ClawHubStats {
+                downloads: raw.downloads,
+                stars: raw.stars,
+                installs_all_time: raw.installs,
+                installs_current: raw.installs,
+                ..Default::default()
+            },
+            created_at: 0,
+            updated_at: raw.updated_at,
+            latest_version: if raw.version.is_empty() {
+                None
+            } else {
+                Some(ClawHubVersionInfo {
+                    version: raw.version,
+                    created_at: raw.updated_at,
+                    changelog: String::new(),
+                })
+            },
+        }
+    }
+}
+
 /// Paginated response from the browse endpoint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -107,11 +186,11 @@ pub struct ClawHubBrowseResponse {
     pub next_cursor: Option<String>,
 }
 
-// -- Search: GET /api/v1/search?q=...&limit=N ------------------------------
+// -- Search: uses the same /api/skills endpoint with `q` parameter ---------
 
-/// A skill entry from the search endpoint (`GET /api/v1/search`).
+/// A skill entry from the search endpoint.
 ///
-/// Search results are much flatter than browse results.
+/// Mapped from `RawSkillEntry` for backward compatibility.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClawHubSearchEntry {
@@ -129,14 +208,31 @@ pub struct ClawHubSearchEntry {
     pub updated_at: i64,
 }
 
-/// Response from the search endpoint. Uses `results`, **not** `items`.
+impl From<RawSkillEntry> for ClawHubSearchEntry {
+    fn from(raw: RawSkillEntry) -> Self {
+        Self {
+            score: raw.score,
+            slug: raw.slug,
+            display_name: raw.name,
+            summary: raw.description,
+            version: if raw.version.is_empty() {
+                None
+            } else {
+                Some(raw.version)
+            },
+            updated_at: raw.updated_at,
+        }
+    }
+}
+
+/// Response from the search endpoint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClawHubSearchResponse {
     pub results: Vec<ClawHubSearchEntry>,
 }
 
-// -- Detail: GET /api/v1/skills/{slug} -------------------------------------
+// -- Detail: synthesized from browse data ----------------------------------
 
 /// The `skill` object nested inside the detail response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -157,7 +253,7 @@ pub struct ClawHubSkillInfo {
     pub updated_at: i64,
 }
 
-/// Full detail response from `GET /api/v1/skills/{slug}`.
+/// Full detail response for a skill.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClawHubSkillDetail {
@@ -169,6 +265,52 @@ pub struct ClawHubSkillDetail {
     /// Moderation status (null when clean).
     #[serde(default)]
     pub moderation: Option<serde_json::Value>,
+}
+
+impl From<RawSkillEntry> for ClawHubSkillDetail {
+    fn from(raw: RawSkillEntry) -> Self {
+        let mut tags = std::collections::HashMap::new();
+        if !raw.version.is_empty() {
+            tags.insert("latest".to_string(), raw.version.clone());
+        }
+        let owner = if raw.owner_name.is_empty() {
+            None
+        } else {
+            Some(ClawHubOwner {
+                handle: raw.owner_name.clone(),
+                display_name: raw.owner_name,
+                ..Default::default()
+            })
+        };
+        Self {
+            skill: ClawHubSkillInfo {
+                slug: raw.slug,
+                display_name: raw.name,
+                summary: raw.description,
+                tags,
+                stats: ClawHubStats {
+                    downloads: raw.downloads,
+                    stars: raw.stars,
+                    installs_all_time: raw.installs,
+                    installs_current: raw.installs,
+                    ..Default::default()
+                },
+                created_at: 0,
+                updated_at: raw.updated_at,
+            },
+            latest_version: if raw.version.is_empty() {
+                None
+            } else {
+                Some(ClawHubVersionInfo {
+                    version: raw.version,
+                    created_at: raw.updated_at,
+                    changelog: String::new(),
+                })
+            },
+            owner,
+            moderation: None,
+        }
+    }
 }
 
 // -- Sort enum -------------------------------------------------------------
@@ -221,11 +363,11 @@ pub struct ClawHubInstallResult {
     pub is_prompt_only: bool,
 }
 
-/// Client for the ClawHub marketplace (clawhub.ai).
+/// Client for the SkillHub marketplace (skillhub.tencent.com).
 pub struct ClawHubClient {
     /// Base URL for the ClawHub API.
     base_url: String,
-    /// Optional fallback URL (original clawhub.ai when using a mirror as primary).
+/// Optional fallback URL (original skillhub.tencent.com when using a mirror as primary).
     fallback_url: Option<String>,
     /// HTTP client.
     client: reqwest::Client,
@@ -233,13 +375,16 @@ pub struct ClawHubClient {
     _cache_dir: PathBuf,
 }
 
-/// Default official ClawHub API URL.
-const CLAWHUB_OFFICIAL_URL: &str = "https://clawhub.ai/api/v1";
+/// Default official SkillHub API URL (lightmake.site backend).
+const CLAWHUB_OFFICIAL_URL: &str = "https://lightmake.site";
+
+/// Download endpoint base (still uses /api/v1 path).
+const CLAWHUB_DOWNLOAD_URL: &str = "https://lightmake.site";
 
 impl ClawHubClient {
-    /// Create a new ClawHub client with default settings.
+    /// Create a new SkillHub client with default settings.
     ///
-    /// Uses the official ClawHub API at `https://clawhub.ai/api/v1`.
+    /// Uses the official SkillHub API at `https://skillhub.tencent.com/api/v1`.
     pub fn new(cache_dir: PathBuf) -> Self {
         Self::with_url(CLAWHUB_OFFICIAL_URL, cache_dir)
     }
@@ -248,11 +393,13 @@ impl ClawHubClient {
     ///
     /// When the mirror is set, all requests go to the mirror first.
     /// If the mirror fails (timeout, 5xx, connection error), the client
-    /// automatically retries against the official `clawhub.ai`.
+    /// automatically retries against the official lightmake.site.
     pub fn with_mirror(mirror_url: &str, cache_dir: PathBuf) -> Self {
         let mirror = mirror_url.trim_end_matches('/');
         let is_official = mirror == CLAWHUB_OFFICIAL_URL
-            || mirror == "https://clawhub.ai/api/v1/";
+            || mirror == "https://lightmake.site/"
+            || mirror == "https://skillhub.tencent.com/api/v1"
+            || mirror == "https://skillhub.tencent.com/api/v1/";
         Self {
             base_url: mirror.to_string(),
             fallback_url: if is_official {
@@ -334,17 +481,17 @@ impl ClawHubClient {
         }
     }
 
-    /// Search for skills on ClawHub using vector/semantic search.
+    /// Search for skills on ClawHub.
     ///
-    /// Uses `GET /api/v1/search?q=...&limit=...`.
-    /// Returns `ClawHubSearchResponse` whose root key is `results` (not `items`).
+    /// Uses `GET /api/skills?q=...&limit=...&sort=trending`.
+    /// The search endpoint is the same as browse but with a `q` parameter.
     pub async fn search(
         &self,
         query: &str,
         limit: u32,
     ) -> Result<ClawHubSearchResponse, SkillError> {
         let path = format!(
-            "/search?q={}&limit={}",
+            "/api/skills?q={}&limit={}&sort=trending",
             urlencoded(query),
             limit.min(50)
         );
@@ -358,17 +505,24 @@ impl ClawHubClient {
             )));
         }
 
-        let results: ClawHubSearchResponse = response
+        let envelope: RawSkillsEnvelope = response
             .json()
             .await
             .map_err(|e| SkillError::Network(format!("Failed to parse ClawHub response: {e}")))?;
 
-        Ok(results)
+        let results: Vec<ClawHubSearchEntry> = envelope
+            .data
+            .skills
+            .into_iter()
+            .map(ClawHubSearchEntry::from)
+            .collect();
+
+        Ok(ClawHubSearchResponse { results })
     }
 
     /// Browse skills by sort order (trending, downloads, stars, etc.).
     ///
-    /// Uses `GET /api/v1/skills?limit=...&sort=...`.
+    /// Uses `GET /api/skills?limit=...&sort=...`.
     pub async fn browse(
         &self,
         sort: ClawHubSort,
@@ -376,7 +530,7 @@ impl ClawHubClient {
         cursor: Option<&str>,
     ) -> Result<ClawHubBrowseResponse, SkillError> {
         let mut path = format!(
-            "/skills?limit={}&sort={}",
+            "/api/skills?limit={}&sort={}",
             limit.min(50),
             sort.as_str()
         );
@@ -394,20 +548,30 @@ impl ClawHubClient {
             )));
         }
 
-        let results: ClawHubBrowseResponse = response
+        let envelope: RawSkillsEnvelope = response
             .json()
             .await
             .map_err(|e| SkillError::Network(format!("Failed to parse ClawHub browse: {e}")))?;
 
-        Ok(results)
+        let items: Vec<ClawHubBrowseEntry> = envelope
+            .data
+            .skills
+            .into_iter()
+            .map(ClawHubBrowseEntry::from)
+            .collect();
+
+        Ok(ClawHubBrowseResponse {
+            items,
+            next_cursor: None,
+        })
     }
 
     /// Get detailed info about a specific skill.
     ///
-    /// Uses `GET /api/v1/skills/{slug}`.
-    /// Response is `{ skill: {...}, latestVersion: {...}, owner: {...}, moderation: null }`.
+    /// Fetches from `GET /api/skills?q={slug}&limit=1` and maps the result.
+    /// Falls back to constructing detail from the browse data.
     pub async fn get_skill(&self, slug: &str) -> Result<ClawHubSkillDetail, SkillError> {
-        let path = format!("/skills/{}", urlencoded(slug));
+        let path = format!("/api/skills?q={}&limit=1", urlencoded(slug));
 
         let response = self.get_with_fallback(&path).await?;
 
@@ -418,12 +582,20 @@ impl ClawHubClient {
             )));
         }
 
-        let detail: ClawHubSkillDetail = response
+        let envelope: RawSkillsEnvelope = response
             .json()
             .await
             .map_err(|e| SkillError::Network(format!("Failed to parse ClawHub detail: {e}")))?;
 
-        Ok(detail)
+        // Find exact slug match in results
+        let raw_entry = envelope
+            .data
+            .skills
+            .into_iter()
+            .find(|s| s.slug == slug)
+            .ok_or_else(|| SkillError::Network(format!("Skill '{slug}' not found on ClawHub")))?;
+
+        Ok(ClawHubSkillDetail::from(raw_entry))
     }
 
     /// Helper: extract the version string from a browse entry.
@@ -438,13 +610,16 @@ impl ClawHubClient {
 
     /// Fetch a specific file from a skill (e.g., SKILL.md, README).
     ///
-    /// Uses `GET /api/v1/skills/{slug}/file?path=SKILL.md`.
+    /// Uses `GET /api/v1/skills/{slug}/file?path=SKILL.md` on the download backend.
     pub async fn get_file(&self, slug: &str, file_path: &str) -> Result<String, SkillError> {
         let path = format!(
-            "/skills/{}/file?path={}",
+            "/api/v1/skills/{}/file?path={}",
             urlencoded(slug),
             urlencoded(file_path)
         );
+
+        // Use the download backend URL for file access
+        let file_url = format!("{}{}", CLAWHUB_DOWNLOAD_URL, path);
 
         // Retry with exponential backoff on 429/5xx
         let mut last_err = String::new();
@@ -453,9 +628,15 @@ impl ClawHubClient {
             if attempt > 0 {
                 let delay = std::time::Duration::from_millis(1000 * 2u64.pow(attempt));
                 tokio::time::sleep(delay).await;
-                info!(slug, attempt, "Retrying ClawHub download");
+                info!(slug, attempt, "Retrying ClawHub file fetch");
             }
-            let response = self.get_with_fallback(&path).await?;
+            let response = self
+                .client
+                .get(&file_url)
+                .header("User-Agent", "OpenFang/0.1")
+                .send()
+                .await
+                .map_err(|e| SkillError::Network(format!("ClawHub file request failed: {e}")))?;
 
             if !response.status().is_success() {
                 if response.status().as_u16() == 429 || response.status().is_server_error() {
@@ -497,8 +678,9 @@ impl ClawHubClient {
         slug: &str,
         target_dir: &Path,
     ) -> Result<ClawHubInstallResult, SkillError> {
-        // Use /api/v1/download?slug=... endpoint with mirror fallback
-        let path = format!("/download?slug={}", urlencoded(slug));
+        // Use /api/v1/download?slug=... endpoint on download backend
+        let path = format!("/api/v1/download?slug={}", urlencoded(slug));
+        let download_url = format!("{}{}", CLAWHUB_DOWNLOAD_URL, path);
 
         info!(slug, "Downloading skill from ClawHub");
 
@@ -511,7 +693,13 @@ impl ClawHubClient {
                 tokio::time::sleep(delay).await;
                 info!(slug, attempt, "Retrying ClawHub download");
             }
-            let response = self.get_with_fallback(&path).await?;
+            let response = self
+                .client
+                .get(&download_url)
+                .header("User-Agent", "OpenFang/0.1")
+                .send()
+                .await
+                .map_err(|e| SkillError::Network(format!("ClawHub download failed: {e}")))?;
 
             if !response.status().is_success() {
                 if response.status().as_u16() == 429 || response.status().is_server_error() {
@@ -652,6 +840,13 @@ impl ClawHubClient {
         let manifest_warnings = SkillVerifier::security_scan(&manifest);
         all_warnings.extend(manifest_warnings);
 
+        // Step 4b: Set source provenance to ClawHub
+        let mut manifest = manifest;
+        manifest.source = Some(crate::SkillSource::ClawHub {
+            slug: slug.to_string(),
+            version: manifest.skill.version.clone(),
+        });
+
         // Step 7: Write skill.toml
         openclaw_compat::write_openfang_manifest(&skill_dir, &manifest)?;
 
@@ -726,139 +921,128 @@ mod tests {
 
     #[test]
     fn test_browse_entry_serde_real_format() {
-        // Matches actual ClawHub browse API response (verified Feb 2026)
+        // Matches actual lightmake.site API response (verified Mar 2026)
         let json = r#"{
-            "slug": "sonoscli",
-            "displayName": "Sonoscli",
-            "summary": "Control Sonos speakers.",
-            "tags": {"latest": "1.0.0"},
-            "stats": {
-                "comments": 1,
-                "downloads": 19736,
-                "installsAllTime": 455,
-                "installsCurrent": 437,
-                "stars": 15,
-                "versions": 1
-            },
-            "createdAt": 1767545381030,
-            "updatedAt": 1771777535889,
-            "latestVersion": {
-                "version": "1.0.0",
-                "createdAt": 1767545381030,
-                "changelog": ""
+            "slug": "video-cog",
+            "name": "video-cog",
+            "description": "Long-form AI video production.",
+            "description_zh": "长视频AI制作",
+            "category": "content-creation",
+            "ownerName": "nitishgargiitd",
+            "downloads": 5210,
+            "installs": 157,
+            "stars": 20,
+            "score": 2307.93,
+            "version": "1.0.3",
+            "homepage": "https://clawhub.ai/nitishgargiitd/video-cog",
+            "updated_at": 1774001468614,
+            "tags": null
+        }"#;
+
+        let raw: RawSkillEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(raw.slug, "video-cog");
+        assert_eq!(raw.name, "video-cog");
+        assert_eq!(raw.downloads, 5210);
+        assert_eq!(raw.stars, 20);
+
+        let entry = ClawHubBrowseEntry::from(raw);
+        assert_eq!(entry.slug, "video-cog");
+        assert_eq!(entry.display_name, "video-cog");
+        assert_eq!(entry.summary, "Long-form AI video production.");
+        assert_eq!(entry.stats.downloads, 5210);
+        assert_eq!(entry.stats.stars, 20);
+        assert_eq!(entry.tags.get("latest").unwrap(), "1.0.3");
+        assert_eq!(entry.latest_version.as_ref().unwrap().version, "1.0.3");
+        assert_eq!(entry.updated_at, 1774001468614);
+    }
+
+    #[test]
+    fn test_browse_response_envelope_serde() {
+        let json = r#"{
+            "code": 0,
+            "data": {
+                "skills": [{
+                    "slug": "test",
+                    "name": "Test",
+                    "description": "A test",
+                    "downloads": 100,
+                    "stars": 5,
+                    "version": "1.0.0",
+                    "updated_at": 0,
+                    "tags": null
+                }]
             }
         }"#;
 
-        let entry: ClawHubBrowseEntry = serde_json::from_str(json).unwrap();
-        assert_eq!(entry.slug, "sonoscli");
-        assert_eq!(entry.display_name, "Sonoscli");
-        assert_eq!(entry.stats.downloads, 19736);
-        assert_eq!(entry.stats.stars, 15);
-        assert_eq!(entry.tags.get("latest").unwrap(), "1.0.0");
-        assert_eq!(entry.latest_version.as_ref().unwrap().version, "1.0.0");
-        assert_eq!(entry.updated_at, 1771777535889);
+        let envelope: RawSkillsEnvelope = serde_json::from_str(json).unwrap();
+        assert_eq!(envelope.code, 0);
+        assert_eq!(envelope.data.skills.len(), 1);
+        assert_eq!(envelope.data.skills[0].slug, "test");
+        assert_eq!(envelope.data.skills[0].downloads, 100);
     }
 
     #[test]
-    fn test_browse_response_serde() {
+    fn test_search_entry_from_raw() {
+        // Matches actual lightmake.site search response (verified Mar 2026)
         let json = r#"{
-            "items": [{
-                "slug": "test",
-                "displayName": "Test",
-                "summary": "A test",
-                "tags": {},
-                "stats": {"downloads": 100, "stars": 5},
-                "createdAt": 0,
-                "updatedAt": 0
-            }],
-            "nextCursor": null
-        }"#;
-
-        let resp: ClawHubBrowseResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.items.len(), 1);
-        assert_eq!(resp.items[0].slug, "test");
-        assert_eq!(resp.items[0].stats.downloads, 100);
-        assert!(resp.next_cursor.is_none());
-    }
-
-    #[test]
-    fn test_search_entry_serde_real_format() {
-        // Matches actual ClawHub search API response (verified Feb 2026)
-        let json = r#"{
-            "score": 3.7110556674218,
             "slug": "github",
-            "displayName": "Github",
-            "summary": "Interact with GitHub using the gh CLI.",
+            "name": "Github",
+            "description": "Interact with GitHub using the gh CLI.",
+            "downloads": 114714,
+            "stars": 376,
+            "score": 43400.64,
             "version": "1.0.0",
-            "updatedAt": 1771777539580
+            "updated_at": 1774001395822
         }"#;
 
-        let entry: ClawHubSearchEntry = serde_json::from_str(json).unwrap();
+        let raw: RawSkillEntry = serde_json::from_str(json).unwrap();
+        let entry = ClawHubSearchEntry::from(raw);
         assert_eq!(entry.slug, "github");
         assert_eq!(entry.display_name, "Github");
-        assert!(entry.score > 3.0);
+        assert!(entry.score > 43000.0);
         assert_eq!(entry.version.as_deref(), Some("1.0.0"));
-        assert_eq!(entry.updated_at, 1771777539580);
+        assert_eq!(entry.updated_at, 1774001395822);
     }
 
     #[test]
     fn test_search_response_serde() {
-        // Search uses "results" not "items"
-        let json = r#"{
-            "results": [{
-                "score": 3.5,
-                "slug": "test",
-                "displayName": "Test",
-                "summary": "A test",
-                "version": "0.1.0",
-                "updatedAt": 0
-            }]
-        }"#;
+        // ClawHubSearchResponse is constructed programmatically, not from API directly
+        let resp = ClawHubSearchResponse {
+            results: vec![ClawHubSearchEntry {
+                score: 3.5,
+                slug: "test".to_string(),
+                display_name: "Test".to_string(),
+                summary: "A test".to_string(),
+                version: Some("0.1.0".to_string()),
+                updated_at: 0,
+            }],
+        };
 
-        let resp: ClawHubSearchResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.results.len(), 1);
         assert_eq!(resp.results[0].slug, "test");
     }
 
     #[test]
-    fn test_skill_detail_serde_real_format() {
-        // Matches actual ClawHub detail API response (verified Feb 2026)
-        let json = r##"{
-            "skill": {
-                "slug": "github",
-                "displayName": "Github",
-                "summary": "Interact with GitHub using the gh CLI.",
-                "tags": {"latest": "1.0.0"},
-                "stats": {
-                    "comments": 3,
-                    "downloads": 23790,
-                    "installsAllTime": 428,
-                    "installsCurrent": 417,
-                    "stars": 67,
-                    "versions": 1
-                },
-                "createdAt": 1767545344344,
-                "updatedAt": 1771777539580
-            },
-            "latestVersion": {
-                "version": "1.0.0",
-                "createdAt": 1767545344344,
-                "changelog": ""
-            },
-            "owner": {
-                "handle": "steipete",
-                "userId": "kn70pywhg0fyz996kpa8xj89s57yhv26",
-                "displayName": "Peter Steinberger",
-                "image": "https://avatars.githubusercontent.com/u/58493?v=4"
-            },
-            "moderation": null
-        }"##;
+    fn test_skill_detail_from_raw() {
+        // Test converting a raw entry to a ClawHubSkillDetail
+        let json = r#"{
+            "slug": "github",
+            "name": "Github",
+            "description": "Interact with GitHub using the gh CLI.",
+            "downloads": 114714,
+            "stars": 376,
+            "score": 43400.64,
+            "version": "1.0.0",
+            "ownerName": "steipete",
+            "updated_at": 1774001395822
+        }"#;
 
-        let detail: ClawHubSkillDetail = serde_json::from_str(json).unwrap();
+        let raw: RawSkillEntry = serde_json::from_str(json).unwrap();
+        let detail = ClawHubSkillDetail::from(raw);
         assert_eq!(detail.skill.slug, "github");
         assert_eq!(detail.skill.display_name, "Github");
-        assert_eq!(detail.skill.stats.downloads, 23790);
-        assert_eq!(detail.skill.stats.stars, 67);
+        assert_eq!(detail.skill.stats.downloads, 114714);
+        assert_eq!(detail.skill.stats.stars, 376);
         assert_eq!(detail.latest_version.as_ref().unwrap().version, "1.0.0");
         assert_eq!(detail.owner.as_ref().unwrap().handle, "steipete");
         assert!(detail.moderation.is_none());
@@ -909,10 +1093,10 @@ mod tests {
     #[test]
     fn test_clawhub_client_with_mirror() {
         let client = ClawHubClient::with_mirror(
-            "https://skillhub.tencent.com/api/v1",
+            "https://mirror.example.com/api/v1",
             PathBuf::from("/tmp/cache"),
         );
-        assert_eq!(client.base_url, "https://skillhub.tencent.com/api/v1");
+        assert_eq!(client.base_url, "https://mirror.example.com/api/v1");
         assert_eq!(client.fallback_url.as_deref(), Some(CLAWHUB_OFFICIAL_URL));
     }
 
@@ -920,7 +1104,18 @@ mod tests {
     fn test_clawhub_client_mirror_same_as_official() {
         // When mirror URL is the same as official, no fallback needed
         let client = ClawHubClient::with_mirror(
-            "https://clawhub.ai/api/v1",
+            "https://lightmake.site",
+            PathBuf::from("/tmp/cache"),
+        );
+        assert_eq!(client.base_url, CLAWHUB_OFFICIAL_URL);
+        assert!(client.fallback_url.is_none());
+    }
+
+    #[test]
+    fn test_clawhub_client_old_skillhub_url_is_official() {
+        // Old skillhub.tencent.com URL should also be treated as official
+        let client = ClawHubClient::with_mirror(
+            "https://skillhub.tencent.com/api/v1",
             PathBuf::from("/tmp/cache"),
         );
         assert_eq!(client.base_url, CLAWHUB_OFFICIAL_URL);

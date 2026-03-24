@@ -297,7 +297,7 @@ pub fn create_driver(config: &DriverConfig) -> Result<Arc<dyn LlmDriver>, LlmErr
     // Claude Code CLI — subprocess-based, no API key needed
     if provider == "claude-code" {
         let cli_path = config.base_url.clone();
-        return Ok(Arc::new(claude_code::ClaudeCodeDriver::new(cli_path)));
+        return Ok(Arc::new(claude_code::ClaudeCodeDriver::new(cli_path, config.skip_permissions)));
     }
 
     // GitHub Copilot — wraps OpenAI-compatible driver with automatic token exchange.

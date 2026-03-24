@@ -4598,6 +4598,37 @@ impl OpenFangKernel {
             .map(|z| z.to_string())
     }
 
+    /// Resolve `${VAR_NAME}` references in a string using credential resolver.
+    ///
+    /// E.g. `"Bearer ${MODELSCOPE_API_TOKEN}"` → `"Bearer sk-abc123..."`.
+    /// If a var is not found the placeholder is left as-is.
+    fn resolve_env_refs(&self, input: &str) -> String {
+        let mut result = input.to_string();
+        // Find all ${VAR} patterns
+        let mut start = 0;
+        while let Some(pos) = result[start..].find("${") {
+            let abs_pos = start + pos;
+            if let Some(end) = result[abs_pos + 2..].find('}') {
+                let var_name = &result[abs_pos + 2..abs_pos + 2 + end].to_string();
+                if let Some(val) = self.resolve_credential(var_name) {
+                    let placeholder = format!("${{{var_name}}}");
+                    result = result.replacen(&placeholder, &val, 1);
+                    start = abs_pos + val.len();
+                } else if let Ok(val) = std::env::var(var_name) {
+                    let placeholder = format!("${{{var_name}}}");
+                    result = result.replacen(&placeholder, &val, 1);
+                    start = abs_pos + val.len();
+                } else {
+                    // Skip unresolved placeholder
+                    start = abs_pos + 2 + end + 1;
+                }
+            } else {
+                break;
+            }
+        }
+        result
+    }
+
     /// Store a credential in the vault (best-effort — falls through silently if no vault).
     pub fn store_credential(&self, key: &str, value: &str) {
         let mut resolver = self
@@ -4784,7 +4815,20 @@ impl OpenFangKernel {
                     command: command.clone(),
                     args: args.clone(),
                 },
-                McpTransportEntry::Sse { url } => McpTransport::Sse { url: url.clone() },
+                McpTransportEntry::Sse { url, headers } => {
+                    // Resolve ${VAR} references in header values from env/vault
+                    let resolved_headers: std::collections::HashMap<String, String> = headers
+                        .iter()
+                        .map(|(k, v)| {
+                            let resolved = Self::resolve_env_refs(self, v);
+                            (k.clone(), resolved)
+                        })
+                        .collect();
+                    McpTransport::Sse {
+                        url: url.clone(),
+                        headers: resolved_headers,
+                    }
+                },
             };
 
             // Resolve env vars from vault/dotenv before passing to MCP subprocess.
@@ -4903,7 +4947,19 @@ impl OpenFangKernel {
                     command: command.clone(),
                     args: args.clone(),
                 },
-                McpTransportEntry::Sse { url } => McpTransport::Sse { url: url.clone() },
+                McpTransportEntry::Sse { url, headers } => {
+                    let resolved_headers: std::collections::HashMap<String, String> = headers
+                        .iter()
+                        .map(|(k, v)| {
+                            let resolved = Self::resolve_env_refs(self, v);
+                            (k.clone(), resolved)
+                        })
+                        .collect();
+                    McpTransport::Sse {
+                        url: url.clone(),
+                        headers: resolved_headers,
+                    }
+                },
             };
 
             let mcp_config = McpServerConfig {
@@ -5021,7 +5077,19 @@ impl OpenFangKernel {
                 command: command.clone(),
                 args: args.clone(),
             },
-            McpTransportEntry::Sse { url } => McpTransport::Sse { url: url.clone() },
+            McpTransportEntry::Sse { url, headers } => {
+                let resolved_headers: std::collections::HashMap<String, String> = headers
+                    .iter()
+                    .map(|(k, v)| {
+                        let resolved = Self::resolve_env_refs(self, v);
+                        (k.clone(), resolved)
+                    })
+                    .collect();
+                McpTransport::Sse {
+                    url: url.clone(),
+                    headers: resolved_headers,
+                }
+            },
         };
 
         let mcp_config = McpServerConfig {
@@ -5570,7 +5638,7 @@ fn infer_provider_from_model(model: &str) -> Option<String> {
             | "cohere" | "xai" | "ollama" | "together" | "fireworks" | "perplexity"
             | "cerebras" | "sambanova" | "replicate" | "huggingface" | "ai21" | "codex"
             | "claude-code" | "copilot" | "github-copilot" | "qwen" | "zhipu" | "zai"
-            | "moonshot" | "openrouter" | "volcengine" | "doubao" | "dashscope" => {
+            | "moonshot" | "openrouter" | "volcengine" | "doubao" | "dashscope" | "venus" => {
                 return Some(prefix.to_string());
             }
             // "kimi" is a brand alias for moonshot

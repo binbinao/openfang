@@ -5,13 +5,22 @@
 
 use std::path::{Path, PathBuf};
 
+/// Additional paths that agents are allowed to access outside their workspace.
+/// These are checked after the workspace root check fails, providing a fallback
+/// for common directories like /tmp and /data/workspace.
+const EXTRA_ALLOWED_PREFIXES: &[&str] = &[
+    "/tmp",
+    "/data/workspace",
+];
+
 /// Resolve a user-supplied path within a workspace sandbox.
 ///
 /// - Rejects `..` components outright.
 /// - Relative paths are joined with `workspace_root`.
 /// - Absolute paths are checked against the workspace root after canonicalization.
 /// - For new files: canonicalizes the parent directory and appends the filename.
-/// - The final canonical path must start with the canonical workspace root.
+/// - The final canonical path must start with the canonical workspace root
+///   or one of the `EXTRA_ALLOWED_PREFIXES`.
 pub fn resolve_sandbox_path(user_path: &str, workspace_root: &Path) -> Result<PathBuf, String> {
     let path = Path::new(user_path);
 
@@ -54,18 +63,32 @@ pub fn resolve_sandbox_path(user_path: &str, workspace_root: &Path) -> Result<Pa
     };
 
     // Verify the canonical path is inside the workspace
-    if !canon_candidate.starts_with(&canon_root) {
-        return Err(format!(
-            "Access denied: path '{}' resolves outside workspace. \
-             If you have an MCP filesystem server configured, use the \
-             mcp_filesystem_* tools (e.g. mcp_filesystem_read_file, \
-             mcp_filesystem_list_directory) to access files outside \
-             the workspace.",
-            user_path
-        ));
+    if canon_candidate.starts_with(&canon_root) {
+        return Ok(canon_candidate);
     }
 
-    Ok(canon_candidate)
+    // Check extra allowed prefixes (e.g. /tmp, /data/workspace)
+    for prefix in EXTRA_ALLOWED_PREFIXES {
+        let prefix_path = Path::new(prefix);
+        if let Ok(canon_prefix) = prefix_path.canonicalize() {
+            if canon_candidate.starts_with(&canon_prefix) {
+                return Ok(canon_candidate);
+            }
+        }
+        // Also check non-canonicalized (e.g. /tmp may not need canonicalization)
+        if canon_candidate.starts_with(prefix_path) {
+            return Ok(canon_candidate);
+        }
+    }
+
+    Err(format!(
+        "Access denied: path '{}' resolves outside workspace. \
+         If you have an MCP filesystem server configured, use the \
+         mcp_filesystem_* tools (e.g. mcp_filesystem_read_file, \
+         mcp_filesystem_list_directory) to access files outside \
+         the workspace.",
+        user_path
+    ))
 }
 
 #[cfg(test)]

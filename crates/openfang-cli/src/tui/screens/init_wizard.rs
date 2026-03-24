@@ -29,6 +29,14 @@ struct ProviderInfo {
 
 const PROVIDERS: &[ProviderInfo] = &[
     ProviderInfo {
+        name: "venus",
+        display: "Venus",
+        env_var: "VENUS_API_KEY",
+        default_model: "deepseek-v3.2",
+        needs_key: true,
+        hint: "internal LLM proxy",
+    },
+    ProviderInfo {
         name: "groq",
         display: "Groq",
         env_var: "GROQ_API_KEY",

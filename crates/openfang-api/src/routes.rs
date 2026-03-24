@@ -3885,6 +3885,9 @@ pub async fn clawhub_install(
 
     match client.install(&req.slug, &skills_dir).await {
         Ok(result) => {
+            // Hot-reload so the installed list and agents see the new skill immediately
+            state.kernel.reload_skills();
+
             let warnings: Vec<serde_json::Value> = result
                 .warnings
                 .iter()
@@ -4860,10 +4863,12 @@ pub async fn list_mcp_servers(State(state): State<Arc<AppState>>) -> impl IntoRe
                         "args": args,
                     })
                 }
-                openfang_types::config::McpTransportEntry::Sse { url } => {
+                openfang_types::config::McpTransportEntry::Sse { url, headers } => {
+                    let has_auth = headers.keys().any(|k| k.to_lowercase() == "authorization");
                     serde_json::json!({
                         "type": "sse",
                         "url": url,
+                        "has_auth": has_auth,
                     })
                 }
             };

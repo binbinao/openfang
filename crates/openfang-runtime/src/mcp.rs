@@ -47,7 +47,12 @@ pub enum McpTransport {
         args: Vec<String>,
     },
     /// HTTP Server-Sent Events.
-    Sse { url: String },
+    Sse {
+        url: String,
+        /// Optional HTTP headers (e.g., Authorization for hosted MCP services).
+        #[serde(default)]
+        headers: HashMap<String, String>,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -80,6 +85,7 @@ enum McpTransportHandle {
     Sse {
         client: reqwest::Client,
         url: String,
+        headers: HashMap<String, String>,
     },
 }
 
@@ -130,9 +136,9 @@ impl McpConnection {
             McpTransport::Stdio { command, args } => {
                 Self::connect_stdio(command, args, &config.env).await?
             }
-            McpTransport::Sse { url } => {
+            McpTransport::Sse { url, headers } => {
                 // SSRF check: reject private/localhost URLs unless explicitly configured
-                Self::connect_sse(url).await?
+                Self::connect_sse(url, headers).await?
             }
         };
 
@@ -347,11 +353,15 @@ impl McpConnection {
 
                 Ok(response.result)
             }
-            McpTransportHandle::Sse { client, url } => {
-                let response = client
+            McpTransportHandle::Sse { client, url, headers } => {
+                let mut req = client
                     .post(url.as_str())
                     .json(&request)
-                    .timeout(std::time::Duration::from_secs(self.config.timeout_secs))
+                    .timeout(std::time::Duration::from_secs(self.config.timeout_secs));
+                for (k, v) in headers {
+                    req = req.header(k.as_str(), v.as_str());
+                }
+                let response = req
                     .send()
                     .await
                     .map_err(|e| format!("MCP SSE request failed: {e}"))?;
@@ -403,8 +413,12 @@ impl McpConnection {
                     .map_err(|e| format!("Write newline: {e}"))?;
                 stdin.flush().await.map_err(|e| format!("Flush: {e}"))?;
             }
-            McpTransportHandle::Sse { client, url } => {
-                let _ = client.post(url.as_str()).json(&notification).send().await;
+            McpTransportHandle::Sse { client, url, headers } => {
+                let mut req = client.post(url.as_str()).json(&notification);
+                for (k, v) in headers.iter() {
+                    req = req.header(k.as_str(), v.as_str());
+                }
+                let _ = req.send().await;
             }
         }
 
@@ -512,7 +526,10 @@ impl McpConnection {
         })
     }
 
-    async fn connect_sse(url: &str) -> Result<McpTransportHandle, String> {
+    async fn connect_sse(
+        url: &str,
+        headers: &HashMap<String, String>,
+    ) -> Result<McpTransportHandle, String> {
         // Basic SSRF check: reject obviously private URLs
         let lower = url.to_lowercase();
         if lower.contains("169.254.169.254") || lower.contains("metadata.google") {
@@ -527,6 +544,7 @@ impl McpConnection {
         Ok(McpTransportHandle::Sse {
             client,
             url: url.to_string(),
+            headers: headers.clone(),
         })
     }
 }
@@ -773,6 +791,7 @@ mod tests {
             name: "test".to_string(),
             transport: McpTransport::Sse {
                 url: "https://example.com/mcp".to_string(),
+                headers: HashMap::new(),
             },
             timeout_secs: 60,
             env: vec![],
@@ -780,7 +799,7 @@ mod tests {
         let json = serde_json::to_string(&sse_config).unwrap();
         let back: McpServerConfig = serde_json::from_str(&json).unwrap();
         match back.transport {
-            McpTransport::Sse { url } => assert_eq!(url, "https://example.com/mcp"),
+            McpTransport::Sse { url, .. } => assert_eq!(url, "https://example.com/mcp"),
             _ => panic!("Expected SSE transport"),
         }
     }

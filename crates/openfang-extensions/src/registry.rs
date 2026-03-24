@@ -189,7 +189,10 @@ impl IntegrationRegistry {
                         }
                     }
                     crate::McpTransportTemplate::Sse { url } => {
-                        McpTransportEntry::Sse { url: url.clone() }
+                        McpTransportEntry::Sse {
+                            url: url.clone(),
+                            headers: std::collections::HashMap::new(),
+                        }
                     }
                 };
                 let env: Vec<String> = template

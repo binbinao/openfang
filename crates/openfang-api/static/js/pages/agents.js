@@ -32,8 +32,8 @@ function agentsPage() {
     loadError: '',
     spawnForm: {
       name: '',
-      provider: 'groq',
-      model: 'llama-3.3-70b-versatile',
+      provider: 'venus',
+      model: 'deepseek-v3.2',
       systemPrompt: 'You are a helpful assistant.',
       profile: 'full',
       caps: { memory_read: true, memory_write: true, network: false, shell: false, agent_spawn: false }
@@ -97,8 +97,8 @@ function agentsPage() {
         name: 'General Assistant',
         description: 'A versatile conversational agent that can help with everyday tasks, answer questions, and provide recommendations.',
         category: 'General',
-        provider: 'groq',
-        model: 'llama-3.3-70b-versatile',
+        provider: 'venus',
+        model: 'deepseek-v3.2',
         profile: 'full',
         system_prompt: 'You are a helpful, friendly assistant. Provide clear, accurate, and concise responses. Ask clarifying questions when needed.'
       },
@@ -106,8 +106,8 @@ function agentsPage() {
         name: 'Code Helper',
         description: 'A programming-focused agent that writes, reviews, and debugs code across multiple languages.',
         category: 'Development',
-        provider: 'groq',
-        model: 'llama-3.3-70b-versatile',
+        provider: 'venus',
+        model: 'deepseek-v3.2',
         profile: 'coding',
         system_prompt: 'You are an expert programmer. Help users write clean, efficient code. Explain your reasoning. Follow best practices and conventions for the language being used.'
       },
@@ -115,8 +115,8 @@ function agentsPage() {
         name: 'Researcher',
         description: 'An analytical agent that breaks down complex topics, synthesizes information, and provides cited summaries.',
         category: 'Research',
-        provider: 'groq',
-        model: 'llama-3.3-70b-versatile',
+        provider: 'venus',
+        model: 'deepseek-v3.2',
         profile: 'research',
         system_prompt: 'You are a research analyst. Break down complex topics into clear explanations. Provide structured analysis with key findings. Cite sources when available.'
       },
@@ -124,8 +124,8 @@ function agentsPage() {
         name: 'Writer',
         description: 'A creative writing agent that helps with drafting, editing, and improving written content of all kinds.',
         category: 'Writing',
-        provider: 'groq',
-        model: 'llama-3.3-70b-versatile',
+        provider: 'venus',
+        model: 'deepseek-v3.2',
         profile: 'full',
         system_prompt: 'You are a skilled writer and editor. Help users create polished content. Adapt your tone and style to match the intended audience. Offer constructive suggestions for improvement.'
       },
@@ -133,8 +133,8 @@ function agentsPage() {
         name: 'Data Analyst',
         description: 'A data-focused agent that helps analyze datasets, create queries, and interpret statistical results.',
         category: 'Development',
-        provider: 'groq',
-        model: 'llama-3.3-70b-versatile',
+        provider: 'venus',
+        model: 'deepseek-v3.2',
         profile: 'coding',
         system_prompt: 'You are a data analysis expert. Help users understand their data, write SQL/Python queries, and interpret results. Present findings clearly with actionable insights.'
       },
@@ -142,8 +142,8 @@ function agentsPage() {
         name: 'DevOps Engineer',
         description: 'A systems-focused agent for CI/CD, infrastructure, Docker, and deployment troubleshooting.',
         category: 'Development',
-        provider: 'groq',
-        model: 'llama-3.3-70b-versatile',
+        provider: 'venus',
+        model: 'deepseek-v3.2',
         profile: 'automation',
         system_prompt: 'You are a DevOps engineer. Help with CI/CD pipelines, Docker, Kubernetes, infrastructure as code, and deployment. Prioritize reliability and security.'
       },
@@ -151,8 +151,8 @@ function agentsPage() {
         name: 'Customer Support',
         description: 'A professional, empathetic agent for handling customer inquiries and resolving issues.',
         category: 'Business',
-        provider: 'groq',
-        model: 'llama-3.3-70b-versatile',
+        provider: 'venus',
+        model: 'deepseek-v3.2',
         profile: 'messaging',
         system_prompt: 'You are a professional customer support representative. Be empathetic, patient, and solution-oriented. Acknowledge concerns before offering solutions. Escalate complex issues appropriately.'
       },
@@ -160,8 +160,8 @@ function agentsPage() {
         name: 'Tutor',
         description: 'A patient educational agent that explains concepts step-by-step and adapts to the learner\'s level.',
         category: 'General',
-        provider: 'groq',
-        model: 'llama-3.3-70b-versatile',
+        provider: 'venus',
+        model: 'deepseek-v3.2',
         profile: 'full',
         system_prompt: 'You are a patient and encouraging tutor. Explain concepts step by step, starting from fundamentals. Use analogies and examples. Check understanding before moving on. Adapt to the learner\'s pace.'
       },
@@ -169,8 +169,8 @@ function agentsPage() {
         name: 'API Designer',
         description: 'An agent specialized in RESTful API design, OpenAPI specs, and integration architecture.',
         category: 'Development',
-        provider: 'groq',
-        model: 'llama-3.3-70b-versatile',
+        provider: 'venus',
+        model: 'deepseek-v3.2',
         profile: 'coding',
         system_prompt: 'You are an API design expert. Help users design clean, consistent RESTful APIs following best practices. Cover endpoint naming, request/response schemas, error handling, and versioning.'
       },
@@ -178,8 +178,8 @@ function agentsPage() {
         name: 'Meeting Notes',
         description: 'Summarizes meeting transcripts into structured notes with action items and key decisions.',
         category: 'Business',
-        provider: 'groq',
-        model: 'llama-3.3-70b-versatile',
+        provider: 'venus',
+        model: 'deepseek-v3.2',
         profile: 'minimal',
         system_prompt: 'You are a meeting summarizer. When given a meeting transcript or notes, produce a structured summary with: key decisions, action items (with owners), discussion highlights, and follow-up questions.'
       }
@@ -403,8 +403,8 @@ function agentsPage() {
       this.selectedPreset = '';
       this.soulContent = '';
       this.spawnForm.name = '';
-      this.spawnForm.provider = 'groq';
-      this.spawnForm.model = 'llama-3.3-70b-versatile';
+      this.spawnForm.provider = 'venus';
+      this.spawnForm.model = 'deepseek-v3.2';
       this.spawnForm.systemPrompt = 'You are a helpful assistant.';
       this.spawnForm.profile = 'full';
       try {
@@ -645,8 +645,8 @@ function agentsPage() {
       if (!this.detailAgent || !this.newProviderValue.trim()) return;
       this.modelSaving = true;
       try {
-        var combined = this.newProviderValue.trim() + '/' + this.detailAgent.model_name;
-        var resp = await OpenFangAPI.put('/api/agents/' + this.detailAgent.id + '/model', { model: combined });
+        var newProvider = this.newProviderValue.trim();
+        var resp = await OpenFangAPI.put('/api/agents/' + this.detailAgent.id + '/model', { model: this.detailAgent.model_name, provider: newProvider });
         OpenFangToast.success('Provider changed to ' + (resp && resp.provider ? resp.provider : this.newProviderValue.trim()));
         this.editingProvider = false;
         await Alpine.store('app').refreshAgents();

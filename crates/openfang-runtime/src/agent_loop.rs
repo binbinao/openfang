@@ -35,14 +35,21 @@ use tracing::{debug, info, warn};
 const MAX_ITERATIONS: u32 = 50;
 
 /// Maximum retries for rate-limited or overloaded API calls.
-const MAX_RETRIES: u32 = 3;
+/// Raised from 3 to 5 to better handle frequently-overloaded providers (e.g. Venus).
+const MAX_RETRIES: u32 = 5;
 
 /// Base delay for exponential backoff (milliseconds).
-const BASE_RETRY_DELAY_MS: u64 = 1000;
+/// Raised from 1000 to 2000 for more breathing room on overloaded services.
+const BASE_RETRY_DELAY_MS: u64 = 2000;
 
 /// Timeout for individual tool executions (seconds).
 /// Raised from 60s to 120s for browser automation and long-running builds.
 const TOOL_TIMEOUT_SECS: u64 = 120;
+
+/// Maximum retries for empty/silent responses (0 in / 0 out).
+/// When a provider returns HTTP 200 but empty content (common with overloaded services),
+/// we retry up to this many times with exponential backoff before giving up.
+const MAX_EMPTY_RETRIES: u32 = 3;
 
 /// Maximum consecutive MaxTokens continuations before returning partial response.
 /// Raised from 3 to 5 to allow longer-form generation.
@@ -343,6 +350,7 @@ pub async fn run_agent_loop(
     let ctx_window = context_window_tokens.unwrap_or(DEFAULT_CONTEXT_WINDOW);
     let context_budget = ContextBudget::new(ctx_window);
     let mut any_tools_executed = false;
+    let mut empty_retries: u32 = 0;
 
     for iteration in 0..max_iterations {
         debug!(iteration, "Agent loop iteration");
@@ -451,21 +459,30 @@ pub async fn run_agent_loop(
                     });
                 }
 
-                // One-shot retry: if the LLM returns empty text with no tool use,
-                // try once more before accepting the empty result.
-                // Triggers on first call OR when input_tokens=0 (silently failed request).
+                // Empty response retry: if the LLM returns empty text with no tool use,
+                // retry up to MAX_EMPTY_RETRIES times with exponential backoff.
+                // Triggers on first call OR when input_tokens=0 (silently failed request,
+                // common when providers like Venus return HTTP 200 but empty body).
                 if text.trim().is_empty() && response.tool_calls.is_empty() && !response.has_any_content() {
                     let is_silent_failure =
                         response.usage.input_tokens == 0 && response.usage.output_tokens == 0;
-                    if iteration == 0 || is_silent_failure {
+                    if (iteration == 0 || is_silent_failure) && empty_retries < MAX_EMPTY_RETRIES {
+                        empty_retries += 1;
+                        let backoff_ms = BASE_RETRY_DELAY_MS * 2u64.pow(empty_retries - 1);
                         warn!(
                             agent = %manifest.name,
                             iteration,
+                            empty_retry = empty_retries,
+                            max_empty_retries = MAX_EMPTY_RETRIES,
+                            backoff_ms,
                             input_tokens = response.usage.input_tokens,
                             output_tokens = response.usage.output_tokens,
                             silent_failure = is_silent_failure,
-                            "Empty response, retrying once"
+                            "Empty response, retrying with backoff ({}/{})",
+                            empty_retries, MAX_EMPTY_RETRIES
                         );
+                        // Back off before retry — gives overloaded providers time to recover
+                        tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
                         // Re-validate messages before retry — the history may have
                         // broken tool_use/tool_result pairs that caused the failure.
                         if is_silent_failure {
@@ -1004,10 +1021,29 @@ async fn call_with_retry(
                 warn!(
                     category = ?classified.category,
                     retryable = classified.is_retryable,
+                    attempt,
                     raw = %raw_error,
                     "LLM error classified: {}",
                     classified.sanitized_message
                 );
+
+                // Retryable errors (e.g. HTTP 500/503 server_error, overloaded but not
+                // caught by the explicit Overloaded variant): retry with backoff instead
+                // of failing immediately.
+                if classified.is_retryable && attempt < MAX_RETRIES {
+                    let delay = classified.suggested_delay_ms
+                        .map(|d| d.max(BASE_RETRY_DELAY_MS))
+                        .unwrap_or(BASE_RETRY_DELAY_MS * 2u64.pow(attempt));
+                    warn!(
+                        attempt,
+                        delay_ms = delay,
+                        category = ?classified.category,
+                        "Retryable error, retrying after backoff"
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                    last_error = Some(classified.sanitized_message);
+                    continue;
+                }
 
                 if let (Some(provider), Some(cooldown)) = (provider, cooldown) {
                     cooldown.record_failure(provider, classified.is_billing);
@@ -1118,10 +1154,29 @@ async fn stream_with_retry(
                 warn!(
                     category = ?classified.category,
                     retryable = classified.is_retryable,
+                    attempt,
                     raw = %raw_error,
                     "LLM stream error classified: {}",
                     classified.sanitized_message
                 );
+
+                // Retryable errors (e.g. HTTP 500/503 server_error, overloaded but not
+                // caught by the explicit Overloaded variant): retry with backoff instead
+                // of failing immediately.
+                if classified.is_retryable && attempt < MAX_RETRIES {
+                    let delay = classified.suggested_delay_ms
+                        .map(|d| d.max(BASE_RETRY_DELAY_MS))
+                        .unwrap_or(BASE_RETRY_DELAY_MS * 2u64.pow(attempt));
+                    warn!(
+                        attempt,
+                        delay_ms = delay,
+                        category = ?classified.category,
+                        "Retryable stream error, retrying after backoff"
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                    last_error = Some(classified.sanitized_message);
+                    continue;
+                }
 
                 if let (Some(provider), Some(cooldown)) = (provider, cooldown) {
                     cooldown.record_failure(provider, classified.is_billing);
@@ -1344,6 +1399,7 @@ pub async fn run_agent_loop_streaming(
     let ctx_window = context_window_tokens.unwrap_or(DEFAULT_CONTEXT_WINDOW);
     let context_budget = ContextBudget::new(ctx_window);
     let mut any_tools_executed = false;
+    let mut empty_retries: u32 = 0;
 
     for iteration in 0..max_iterations {
         debug!(iteration, "Streaming agent loop iteration");
@@ -1472,21 +1528,30 @@ pub async fn run_agent_loop_streaming(
                     });
                 }
 
-                // One-shot retry: if the LLM returns empty text with no tool use,
-                // try once more before accepting the empty result.
-                // Triggers on first call OR when input_tokens=0 (silently failed request).
+                // Empty response retry: if the LLM returns empty text with no tool use,
+                // retry up to MAX_EMPTY_RETRIES times with exponential backoff.
+                // Triggers on first call OR when input_tokens=0 (silently failed request,
+                // common when providers like Venus return HTTP 200 but empty body).
                 if text.trim().is_empty() && response.tool_calls.is_empty() && !response.has_any_content() {
                     let is_silent_failure =
                         response.usage.input_tokens == 0 && response.usage.output_tokens == 0;
-                    if iteration == 0 || is_silent_failure {
+                    if (iteration == 0 || is_silent_failure) && empty_retries < MAX_EMPTY_RETRIES {
+                        empty_retries += 1;
+                        let backoff_ms = BASE_RETRY_DELAY_MS * 2u64.pow(empty_retries - 1);
                         warn!(
                             agent = %manifest.name,
                             iteration,
+                            empty_retry = empty_retries,
+                            max_empty_retries = MAX_EMPTY_RETRIES,
+                            backoff_ms,
                             input_tokens = response.usage.input_tokens,
                             output_tokens = response.usage.output_tokens,
                             silent_failure = is_silent_failure,
-                            "Empty response (streaming), retrying once"
+                            "Empty response (streaming), retrying with backoff ({}/{})",
+                            empty_retries, MAX_EMPTY_RETRIES
                         );
+                        // Back off before retry — gives overloaded providers time to recover
+                        tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
                         // Re-validate messages before retry — the history may have
                         // broken tool_use/tool_result pairs that caused the failure.
                         if is_silent_failure {
@@ -2747,8 +2812,9 @@ mod tests {
 
     #[test]
     fn test_retry_constants() {
-        assert_eq!(MAX_RETRIES, 3);
-        assert_eq!(BASE_RETRY_DELAY_MS, 1000);
+        assert_eq!(MAX_RETRIES, 5);
+        assert_eq!(BASE_RETRY_DELAY_MS, 2000);
+        assert_eq!(MAX_EMPTY_RETRIES, 3);
     }
 
     #[test]

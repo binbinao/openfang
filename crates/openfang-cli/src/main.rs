@@ -1401,6 +1401,7 @@ fn detect_best_provider() -> (&'static str, &'static str, &'static str) {
 /// Static list of supported providers: (id, env_var, default_model, display_name).
 fn provider_list() -> Vec<(&'static str, &'static str, &'static str, &'static str)> {
     vec![
+        ("venus", "VENUS_API_KEY", "deepseek-v3.2", "Venus"),
         ("groq", "GROQ_API_KEY", "llama-3.3-70b-versatile", "Groq"),
         ("gemini", "GEMINI_API_KEY", "gemini-2.5-flash", "Gemini"),
         ("deepseek", "DEEPSEEK_API_KEY", "deepseek-chat", "DeepSeek"),
@@ -2580,7 +2581,7 @@ decay_rate = 0.05
                                         checks.push(serde_json::json!({"check": "mcp_server_config", "status": "warn", "name": server.name}));
                                     }
                                 }
-                                openfang_types::config::McpTransportEntry::Sse { url } => {
+                                openfang_types::config::McpTransportEntry::Sse { url, .. } => {
                                     if url.is_empty() {
                                         if !json {
                                             ui::check_warn(&format!(

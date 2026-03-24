@@ -35,8 +35,8 @@ function wizardPage() {
         description: 'A versatile helper for everyday tasks, answering questions, and providing recommendations.',
         icon: 'GA',
         category: 'General',
-        provider: 'deepseek',
-        model: 'deepseek-chat',
+        provider: 'venus',
+        model: 'deepseek-v3.2',
         profile: 'balanced',
         system_prompt: 'You are a helpful, friendly assistant. Provide clear, accurate, and concise responses. Ask clarifying questions when needed.'
       },
@@ -46,8 +46,8 @@ function wizardPage() {
         description: 'A programming-focused agent that writes, reviews, and debugs code across multiple languages.',
         icon: 'CH',
         category: 'Development',
-        provider: 'deepseek',
-        model: 'deepseek-chat',
+        provider: 'venus',
+        model: 'deepseek-v3.2',
         profile: 'precise',
         system_prompt: 'You are an expert programmer. Help users write clean, efficient code. Explain your reasoning. Follow best practices and conventions for the language being used.'
       },
@@ -57,8 +57,8 @@ function wizardPage() {
         description: 'An analytical agent that breaks down complex topics, synthesizes information, and provides cited summaries.',
         icon: 'RS',
         category: 'Research',
-        provider: 'gemini',
-        model: 'gemini-2.5-flash',
+        provider: 'venus',
+        model: 'deepseek-v3.2',
         profile: 'balanced',
         system_prompt: 'You are a research analyst. Break down complex topics into clear explanations. Provide structured analysis with key findings. Cite sources when available.'
       },
@@ -68,8 +68,8 @@ function wizardPage() {
         description: 'A creative writing agent that helps with drafting, editing, and improving written content of all kinds.',
         icon: 'WR',
         category: 'Writing',
-        provider: 'deepseek',
-        model: 'deepseek-chat',
+        provider: 'venus',
+        model: 'deepseek-v3.2',
         profile: 'creative',
         system_prompt: 'You are a skilled writer and editor. Help users create polished content. Adapt your tone and style to match the intended audience. Offer constructive suggestions for improvement.'
       },
@@ -79,8 +79,8 @@ function wizardPage() {
         description: 'A data-focused agent that helps analyze datasets, create queries, and interpret statistical results.',
         icon: 'DA',
         category: 'Development',
-        provider: 'gemini',
-        model: 'gemini-2.5-flash',
+        provider: 'venus',
+        model: 'deepseek-v3.2',
         profile: 'precise',
         system_prompt: 'You are a data analysis expert. Help users understand their data, write SQL/Python queries, and interpret results. Present findings clearly with actionable insights.'
       },
@@ -90,8 +90,8 @@ function wizardPage() {
         description: 'A systems-focused agent for CI/CD, infrastructure, Docker, and deployment troubleshooting.',
         icon: 'DO',
         category: 'Development',
-        provider: 'deepseek',
-        model: 'deepseek-chat',
+        provider: 'venus',
+        model: 'deepseek-v3.2',
         profile: 'precise',
         system_prompt: 'You are a DevOps engineer. Help with CI/CD pipelines, Docker, Kubernetes, infrastructure as code, and deployment. Prioritize reliability and security.'
       },
@@ -101,8 +101,8 @@ function wizardPage() {
         description: 'A professional, empathetic agent for handling customer inquiries and resolving issues.',
         icon: 'CS',
         category: 'Business',
-        provider: 'groq',
-        model: 'llama-3.3-70b-versatile',
+        provider: 'venus',
+        model: 'deepseek-v3.2',
         profile: 'balanced',
         system_prompt: 'You are a professional customer support representative. Be empathetic, patient, and solution-oriented. Acknowledge concerns before offering solutions. Escalate complex issues appropriately.'
       },
@@ -112,8 +112,8 @@ function wizardPage() {
         description: 'A patient educational agent that explains concepts step-by-step and adapts to the learner\'s level.',
         icon: 'TU',
         category: 'General',
-        provider: 'groq',
-        model: 'llama-3.3-70b-versatile',
+        provider: 'venus',
+        model: 'deepseek-v3.2',
         profile: 'balanced',
         system_prompt: 'You are a patient and encouraging tutor. Explain concepts step by step, starting from fundamentals. Use analogies and examples. Check understanding before moving on. Adapt to the learner\'s pace.'
       },
@@ -123,8 +123,8 @@ function wizardPage() {
         description: 'An agent specialized in RESTful API design, OpenAPI specs, and integration architecture.',
         icon: 'AD',
         category: 'Development',
-        provider: 'deepseek',
-        model: 'deepseek-chat',
+        provider: 'venus',
+        model: 'deepseek-v3.2',
         profile: 'precise',
         system_prompt: 'You are an API design expert. Help users design clean, consistent RESTful APIs following best practices. Cover endpoint naming, request/response schemas, error handling, and versioning.'
       },
@@ -134,8 +134,8 @@ function wizardPage() {
         description: 'Summarizes meeting transcripts into structured notes with action items and key decisions.',
         icon: 'MN',
         category: 'Business',
-        provider: 'groq',
-        model: 'llama-3.3-70b-versatile',
+        provider: 'venus',
+        model: 'deepseek-v3.2',
         profile: 'precise',
         system_prompt: 'You are a meeting summarizer. When given a meeting transcript or notes, produce a structured summary with: key decisions, action items (with owners), discussion highlights, and follow-up questions.'
       }
@@ -498,6 +498,7 @@ function wizardPage() {
 
     defaultModelForProvider(providerId) {
       var defaults = {
+        venus: 'deepseek-v3.2',
         anthropic: 'claude-sonnet-4-20250514',
         openai: 'gpt-4o',
         gemini: 'gemini-2.5-flash',

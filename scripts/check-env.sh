@@ -4,6 +4,19 @@
 
 set -euo pipefail
 
+# Ensure Rust toolchain is in PATH
+if ! command -v cargo &>/dev/null; then
+    if [ -f "$HOME/.cargo/env" ]; then
+        source "$HOME/.cargo/env"
+    elif [ -d "$HOME/.rustup/toolchains" ]; then
+        for tc in "$HOME"/.rustup/toolchains/*/bin; do
+            [ -d "$tc" ] && export PATH="$tc:$PATH" && break
+        done
+    fi
+fi
+
+PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+
 # 颜色定义
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -43,7 +56,18 @@ check_rust() {
 check_openfang_binary() {
     info "检查openfang二进制文件..."
     
-    OPENFANG_BIN="${OPENFANG_BIN:-$(which openfang 2>/dev/null || echo "$HOME/.cargo/bin/openfang")}"
+    OPENFANG_BIN="${OPENFANG_BIN:-}"
+    if [ -z "$OPENFANG_BIN" ]; then
+        if command -v openfang &>/dev/null; then
+            OPENFANG_BIN="$(command -v openfang)"
+        elif [ -x "$PROJECT_DIR/target/release/openfang" ]; then
+            OPENFANG_BIN="$PROJECT_DIR/target/release/openfang"
+        elif [ -x "$PROJECT_DIR/target/debug/openfang" ]; then
+            OPENFANG_BIN="$PROJECT_DIR/target/debug/openfang"
+        else
+            OPENFANG_BIN="$HOME/.cargo/bin/openfang"
+        fi
+    fi
     
     if [ -f "$OPENFANG_BIN" ] && [ -x "$OPENFANG_BIN" ]; then
         ok "openfang二进制文件存在: $OPENFANG_BIN"

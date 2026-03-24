@@ -20,6 +20,12 @@ struct ProviderInfo {
 
 const PROVIDERS: &[ProviderInfo] = &[
     ProviderInfo {
+        name: "venus",
+        env_var: "VENUS_API_KEY",
+        default_model: "deepseek-v3.2",
+        needs_key: true,
+    },
+    ProviderInfo {
         name: "groq",
         env_var: "GROQ_API_KEY",
         default_model: "llama-3.3-70b-versatile",

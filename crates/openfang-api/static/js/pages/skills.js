@@ -1,4 +1,4 @@
-// OpenFang Skills Page — OpenClaw/ClawHub ecosystem + local skills + MCP servers
+// OpenFang Skills Page — SkillHub ecosystem + local skills + MCP servers
 'use strict';
 
 function skillsPage() {
@@ -31,7 +31,7 @@ function skillsPage() {
     skillCodeLoading: false,
 
     // MCP servers
-    mcpServers: [],
+    mcpServers: { configured: [], connected: [], total_configured: 0, total_connected: 0 },
     mcpLoading: false,
 
     // Category definitions from the OpenClaw ecosystem
@@ -68,7 +68,7 @@ function skillsPage() {
     sourceBadge: function(source) {
       if (!source) return { text: 'Local', cls: 'badge-dim' };
       switch (source.type) {
-        case 'clawhub': return { text: 'ClawHub', cls: 'badge-info' };
+        case 'clawhub': return { text: 'SkillHub', cls: 'badge-info' };
         case 'openclaw': return { text: 'OpenClaw', cls: 'badge-info' };
         case 'bundled': return { text: 'Built-in', cls: 'badge-success' };
         default: return { text: 'Local', cls: 'badge-dim' };

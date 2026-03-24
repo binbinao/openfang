@@ -41,8 +41,21 @@ listen_addr = "127.0.0.1:4200"           # OFP listen address
 # bot_token_env = "SLACK_BOT_TOKEN"
 # app_token_env = "SLACK_APP_TOKEN"
 
-# MCP server connections
+# MCP server connections (stdio or SSE transport)
 # [[mcp_servers]]
 # name = "filesystem"
+# timeout_secs = 30
+# [mcp_servers.transport]
+# type = "stdio"
 # command = "npx"
 # args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+#
+# SSE with auth (e.g. ModelScope hosted):
+# [[mcp_servers]]
+# name = "modelscope-fetch"
+# timeout_secs = 60
+# [mcp_servers.transport]
+# type = "sse"
+# url = "https://mcp.api.modelscope.cn/..."
+# [mcp_servers.transport.headers]
+# Authorization = "Bearer ${MODELSCOPE_API_TOKEN}"

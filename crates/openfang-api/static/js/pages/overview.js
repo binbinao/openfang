@@ -127,7 +127,20 @@ function overviewPage() {
     async loadMcpServers() {
       try {
         var data = await OpenFangAPI.get('/api/mcp/servers');
-        this.mcpServers = data.servers || [];
+        // API returns { configured, connected, total_configured, total_connected }
+        // Merge into a flat list for the overview dashboard cards
+        var servers = [];
+        (data.connected || []).forEach(function(s) {
+          servers.push({ name: s.name, status: 'connected', tools_count: s.tools_count || 0 });
+        });
+        (data.configured || []).forEach(function(s) {
+          // Skip if already in connected list
+          var already = servers.some(function(x) { return x.name === s.name; });
+          if (!already) {
+            servers.push({ name: s.name, status: 'configured', transport: s.transport });
+          }
+        });
+        this.mcpServers = servers;
       } catch(e) { this.mcpServers = []; }
     },
 

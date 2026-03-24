@@ -89,6 +89,15 @@ pub struct ChannelOverrides {
     pub usage_footer: Option<UsageFooterMode>,
     /// Typing indicator mode override.
     pub typing_mode: Option<TypingMode>,
+    /// Enable lifecycle reaction indicators (e.g., emoji reactions for thinking/done).
+    /// Defaults to `true` when not set.
+    #[serde(default = "default_lifecycle_reactions")]
+    pub lifecycle_reactions: bool,
+}
+
+/// Default value for lifecycle_reactions: enabled.
+fn default_lifecycle_reactions() -> bool {
+    true
 }
 
 /// Controls what usage info appears in response footers.
@@ -1068,15 +1077,21 @@ pub struct KernelConfig {
     /// If not set, the convention `{PROVIDER_UPPER}_API_KEY` is used automatically.
     #[serde(default)]
     pub provider_api_keys: HashMap<String, String>,
-    /// OAuth client ID overrides for PKCE flows.
+/// OAuth client ID overrides for PKCE flows.
     #[serde(default)]
     pub oauth: OAuthConfig,
-    /// ClawHub mirror URL override for faster access in China.
+    /// SkillHub mirror URL override for faster access.
     /// Set to a full API base URL, e.g. `"https://skillhub.tencent.com/api/v1"`.
-    /// When set, all ClawHub requests use this mirror first, falling back to
-    /// the official `clawhub.ai` if the mirror fails.
+    /// When set, all SkillHub requests use this mirror first, falling back to
+    /// the official `skillhub.tencent.com` if the mirror fails.
     #[serde(default)]
     pub clawhub_mirror: Option<String>,
+    /// Root directory for workflow definitions. Default: `~/.openfang/workflows`
+    #[serde(default)]
+    pub workflows_dir: Option<PathBuf>,
+    /// Dashboard authentication configuration.
+    #[serde(default)]
+    pub auth: AuthConfig,
 }
 
 /// OAuth client ID overrides for PKCE flows.
@@ -1100,6 +1115,35 @@ pub struct OAuthConfig {
     pub slack_client_id: Option<String>,
 }
 
+/// Dashboard authentication configuration.
+///
+/// When enabled, the web UI requires login with username/password.
+/// ```toml
+/// [auth]
+/// enabled = true
+/// username = "admin"
+/// password_hash = "$argon2id$..."
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AuthConfig {
+    /// Enable dashboard authentication.
+    pub enabled: bool,
+    /// Username for dashboard login.
+    #[serde(default)]
+    pub username: String,
+    /// Argon2id hash of the password.
+    #[serde(default)]
+    pub password_hash: String,
+    /// Session token TTL in hours (default: 24).
+    #[serde(default = "default_session_ttl_hours")]
+    pub session_ttl_hours: u64,
+}
+
+fn default_session_ttl_hours() -> u64 {
+    24
+}
+
 /// Global spending budget configuration.
 ///
 /// Set limits to 0.0 for unlimited. All limits apply across all agents.
@@ -1114,6 +1158,8 @@ pub struct BudgetConfig {
     pub max_monthly_usd: f64,
     /// Alert threshold as a fraction (0.0 - 1.0). Trigger warnings at this % of any limit.
     pub alert_threshold: f64,
+    /// Global default token limit per agent per hour (0 = use per-agent values).
+    pub default_max_llm_tokens_per_hour: u64,
 }
 
 impl Default for BudgetConfig {
@@ -1123,6 +1169,7 @@ impl Default for BudgetConfig {
             max_daily_usd: 0.0,
             max_monthly_usd: 0.0,
             alert_threshold: 0.8,
+            default_max_llm_tokens_per_hour: 0,
         }
     }
 }
@@ -1164,7 +1211,12 @@ pub enum McpTransportEntry {
         args: Vec<String>,
     },
     /// HTTP Server-Sent Events.
-    Sse { url: String },
+    Sse {
+        url: String,
+        /// Optional HTTP headers (e.g., Authorization for hosted MCP services).
+        #[serde(default)]
+        headers: HashMap<String, String>,
+    },
 }
 
 /// A2A (Agent-to-Agent) protocol configuration.
@@ -1250,6 +1302,8 @@ impl Default for KernelConfig {
             provider_api_keys: HashMap::new(),
             oauth: OAuthConfig::default(),
             clawhub_mirror: None,
+            workflows_dir: None,
+            auth: AuthConfig::default(),
         }
     }
 }
@@ -1400,9 +1454,9 @@ pub struct DefaultModelConfig {
 impl Default for DefaultModelConfig {
     fn default() -> Self {
         Self {
-            provider: "anthropic".to_string(),
-            model: "claude-sonnet-4-20250514".to_string(),
-            api_key_env: "ANTHROPIC_API_KEY".to_string(),
+            provider: "venus".to_string(),
+            model: "deepseek-v3.2".to_string(),
+            api_key_env: "VENUS_API_KEY".to_string(),
             base_url: None,
         }
     }
@@ -1572,6 +1626,8 @@ pub struct ChannelsConfig {
     pub mumble: Option<MumbleConfig>,
     /// DingTalk robot configuration (None = disabled).
     pub dingtalk: Option<DingTalkConfig>,
+    /// DingTalk Stream mode configuration (None = disabled).
+    pub dingtalk_stream: Option<DingTalkStreamConfig>,
     /// Discourse forum configuration (None = disabled).
     pub discourse: Option<DiscourseConfig>,
     /// Gitter streaming configuration (None = disabled).
@@ -1584,6 +1640,8 @@ pub struct ChannelsConfig {
     pub webhook: Option<WebhookConfig>,
     /// LinkedIn messaging configuration (None = disabled).
     pub linkedin: Option<LinkedInConfig>,
+    /// WeCom (WeChat Work) configuration (None = disabled).
+    pub wecom: Option<WeComConfig>,
 }
 
 /// Telegram channel adapter configuration.
@@ -1607,6 +1665,9 @@ pub struct TelegramConfig {
     /// Per-channel behavior overrides.
     #[serde(default)]
     pub overrides: ChannelOverrides,
+    /// Default chat ID for proactive messaging.
+    #[serde(default)]
+    pub default_chat_id: Option<String>,
 }
 
 impl Default for TelegramConfig {
@@ -1618,6 +1679,7 @@ impl Default for TelegramConfig {
             poll_interval_secs: 1,
             api_url: None,
             overrides: ChannelOverrides::default(),
+            default_chat_id: None,
         }
     }
 }
@@ -1646,6 +1708,9 @@ pub struct DiscordConfig {
     /// Per-channel behavior overrides.
     #[serde(default)]
     pub overrides: ChannelOverrides,
+    /// Default channel ID for proactive messaging.
+    #[serde(default)]
+    pub default_channel_id: Option<String>,
 }
 
 impl Default for DiscordConfig {
@@ -1658,6 +1723,7 @@ impl Default for DiscordConfig {
             intents: 37376,
             ignore_bots: true,
             overrides: ChannelOverrides::default(),
+            default_channel_id: None,
         }
     }
 }
@@ -1678,6 +1744,15 @@ pub struct SlackConfig {
     /// Per-channel behavior overrides.
     #[serde(default)]
     pub overrides: ChannelOverrides,
+    /// Automatically reply in thread when receiving a message in a thread.
+    #[serde(default = "default_true")]
+    pub auto_thread_reply: bool,
+    /// Thread time-to-live in hours (0 = no expiry).
+    #[serde(default)]
+    pub thread_ttl_hours: u64,
+    /// Enable link unfurling in messages.
+    #[serde(default)]
+    pub unfurl_links: bool,
 }
 
 impl Default for SlackConfig {
@@ -1688,6 +1763,9 @@ impl Default for SlackConfig {
             allowed_channels: vec![],
             default_agent: None,
             overrides: ChannelOverrides::default(),
+            auto_thread_reply: true,
+            thread_ttl_hours: 0,
+            unfurl_links: false,
         }
     }
 }
@@ -1780,6 +1858,9 @@ pub struct MatrixConfig {
     /// Per-channel behavior overrides.
     #[serde(default)]
     pub overrides: ChannelOverrides,
+    /// Automatically accept room invites.
+    #[serde(default)]
+    pub auto_accept_invites: bool,
 }
 
 impl Default for MatrixConfig {
@@ -1791,6 +1872,7 @@ impl Default for MatrixConfig {
             allowed_rooms: vec![],
             default_agent: None,
             overrides: ChannelOverrides::default(),
+            auto_accept_invites: false,
         }
     }
 }
@@ -2303,6 +2385,29 @@ pub struct FeishuConfig {
     /// Per-channel behavior overrides.
     #[serde(default)]
     pub overrides: ChannelOverrides,
+    /// Region setting (e.g., "cn", "global").
+    #[serde(default = "default_feishu_region")]
+    pub region: String,
+    /// Env var name holding the encrypt key for callback verification.
+    #[serde(default)]
+    pub encrypt_key_env: Option<String>,
+    /// Custom webhook path.
+    #[serde(default = "default_feishu_webhook_path")]
+    pub webhook_path: String,
+    /// Verification token for callback validation.
+    #[serde(default)]
+    pub verification_token: Option<String>,
+    /// Bot display names for @mention matching.
+    #[serde(default)]
+    pub bot_names: Vec<String>,
+}
+
+fn default_feishu_region() -> String {
+    "cn".to_string()
+}
+
+fn default_feishu_webhook_path() -> String {
+    "/feishu/webhook".to_string()
 }
 
 impl Default for FeishuConfig {
@@ -2313,6 +2418,11 @@ impl Default for FeishuConfig {
             webhook_port: 8453,
             default_agent: None,
             overrides: ChannelOverrides::default(),
+            region: default_feishu_region(),
+            encrypt_key_env: None,
+            webhook_path: default_feishu_webhook_path(),
+            verification_token: None,
+            bot_names: Vec::new(),
         }
     }
 }
@@ -2663,6 +2773,35 @@ impl Default for DingTalkConfig {
     }
 }
 
+/// DingTalk Stream mode channel adapter configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DingTalkStreamConfig {
+    /// Env var name holding the app key.
+    pub app_key_env: String,
+    /// Env var name holding the app secret.
+    pub app_secret_env: String,
+    /// Env var name holding the robot code.
+    pub robot_code_env: String,
+    /// Default agent name to route messages to.
+    pub default_agent: Option<String>,
+    /// Per-channel behavior overrides.
+    #[serde(default)]
+    pub overrides: ChannelOverrides,
+}
+
+impl Default for DingTalkStreamConfig {
+    fn default() -> Self {
+        Self {
+            app_key_env: "DINGTALK_APP_KEY".to_string(),
+            app_secret_env: "DINGTALK_APP_SECRET".to_string(),
+            robot_code_env: "DINGTALK_ROBOT_CODE".to_string(),
+            default_agent: None,
+            overrides: ChannelOverrides::default(),
+        }
+    }
+}
+
 /// Discourse forum channel adapter configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -2829,6 +2968,46 @@ impl Default for LinkedInConfig {
         Self {
             access_token_env: "LINKEDIN_ACCESS_TOKEN".to_string(),
             organization_id: String::new(),
+            default_agent: None,
+            overrides: ChannelOverrides::default(),
+        }
+    }
+}
+
+/// WeCom (WeChat Work) channel adapter configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WeComConfig {
+    /// WeCom corp ID.
+    pub corp_id: String,
+    /// WeCom application agent ID.
+    pub agent_id: String,
+    /// Env var name holding the application secret.
+    pub secret_env: String,
+    /// Port for the incoming webhook server.
+    pub webhook_port: u16,
+    /// Encoding AES key for callback verification (optional).
+    #[serde(default)]
+    pub encoding_aes_key: Option<String>,
+    /// Token for callback verification (optional).
+    #[serde(default)]
+    pub token: Option<String>,
+    /// Default agent name to route messages to.
+    pub default_agent: Option<String>,
+    /// Per-channel behavior overrides.
+    #[serde(default)]
+    pub overrides: ChannelOverrides,
+}
+
+impl Default for WeComConfig {
+    fn default() -> Self {
+        Self {
+            corp_id: String::new(),
+            agent_id: String::new(),
+            secret_env: "WECOM_SECRET".to_string(),
+            webhook_port: 8460,
+            encoding_aes_key: None,
+            token: None,
             default_agent: None,
             overrides: ChannelOverrides::default(),
         }

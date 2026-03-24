@@ -1181,7 +1181,7 @@
                     </div>
                     <div class="form-group">
                       <label>Model</label>
-                      <input class="form-input" x-model="spawnForm.model" placeholder="e.g. llama-3.3-70b-versatile">
+                      <input class="form-input" x-model="spawnForm.model" placeholder="e.g. deepseek-v3.2">
                     </div>
                     <div class="form-group">
                       <label>System Prompt</label>
@@ -2192,9 +2192,9 @@
         <div class="page-body" x-init="loadSkills()">
           <div class="info-card">
             <h4>Skills &amp; Ecosystem</h4>
-            <p>Skills extend your agents with new capabilities. OpenFang supports the <strong>OpenClaw/ClawHub</strong> ecosystem (3,000+ community skills) plus local skills.</p>
+<p>Skills extend your agents with new capabilities. OpenFang supports the <strong>SkillHub</strong> ecosystem (3,000+ community skills) plus local skills.</p>
             <ul>
-              <li><strong>Prompt-only</strong> &mdash; inject context and instructions into the agent's system prompt (most ClawHub skills)</li>
+<li><strong>Prompt-only</strong> &mdash; inject context and instructions into the agent's system prompt (most SkillHub skills)</li>
               <li><strong>Python / Node.js</strong> &mdash; executable tools that agents can call during conversations</li>
               <li><strong>MCP Servers</strong> &mdash; external tools via Model Context Protocol (GitHub, filesystem, databases, etc.)</li>
             </ul>
@@ -2212,7 +2212,7 @@
             <div class="tab" role="tab" :class="{ active: tab === 'installed' }" @click="tab = 'installed'">
               Installed <span class="badge badge-dim" x-show="skills.length" x-text="skills.length" style="margin-left:4px"></span>
             </div>
-            <div class="tab" :class="{ active: tab === 'clawhub' }" @click="tab = 'clawhub'; if (!clawhubBrowseResults.length && !clawhubSearch) browseClawHub('trending')">ClawHub</div>
+            <div class="tab" :class="{ active: tab === 'clawhub' }" @click="tab = 'clawhub'; if (!clawhubBrowseResults.length && !clawhubSearch) browseClawHub('trending')">SkillHub</div>
             <div class="tab" :class="{ active: tab === 'mcp' }" @click="tab = 'mcp'; loadMcpServers()">MCP Servers</div>
             <div class="tab" :class="{ active: tab === 'create' }" @click="tab = 'create'">Quick Start</div>
           </div>
@@ -2247,20 +2247,20 @@
                 <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/></svg>
               </div>
               <h3>No skills installed</h3>
-              <p>Skills add new capabilities to your agents. Browse ClawHub for 3,000+ community skills or create your own.</p>
+              <p>Skills add new capabilities to your agents. Browse SkillHub for 3,000+ community skills or create your own.</p>
               <div class="flex gap-2">
-                <button class="btn btn-primary" @click="tab = 'clawhub'; if (!clawhubBrowseResults.length) browseClawHub('trending')">Browse ClawHub</button>
+                <button class="btn btn-primary" @click="tab = 'clawhub'; if (!clawhubBrowseResults.length) browseClawHub('trending')">Browse SkillHub</button>
                 <button class="btn btn-ghost" @click="tab = 'create'">Quick Start</button>
               </div>
             </div>
           </div>
 
-          <!-- TAB: ClawHub (OpenClaw Ecosystem) -->
+          <!-- TAB: SkillHub -->
           <div x-show="tab === 'clawhub'">
             <!-- Search bar with live search and clear button -->
             <div class="search-input mb-4" style="position:relative">
               <span style="color:var(--text-muted)"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg></span>
-              <input placeholder="Search ClawHub skills... (type to search)" x-model="clawhubSearch" @input="onSearchInput()" @keydown.enter="if(!$event.isComposing && $event.keyCode !== 229) searchClawHub()" @keydown.escape="clearSearch()" x-ref="clawhubSearchInput">
+              <input placeholder="Search SkillHub skills... (type to search)" x-model="clawhubSearch" @input="onSearchInput()" @keydown.enter="if(!$event.isComposing && $event.keyCode !== 229) searchClawHub()" @keydown.escape="clearSearch()" x-ref="clawhubSearchInput">
               <button x-show="clawhubSearch" @click="clearSearch()" class="search-clear-btn" title="Clear search (Esc)">&times;</button>
             </div>
 
@@ -2283,13 +2283,13 @@
             </div>
 
             <!-- Loading spinner -->
-            <div x-show="clawhubLoading" class="loading-state"><div class="spinner"></div><span x-text="clawhubSearch ? 'Searching ClawHub...' : 'Loading skills...'"></span></div>
+            <div x-show="clawhubLoading" class="loading-state"><div class="spinner"></div><span x-text="clawhubSearch ? 'Searching SkillHub...' : 'Loading skills...'"></span></div>
 
             <!-- Error -->
             <div x-show="clawhubError && !clawhubLoading" class="error-state">
               <span class="error-icon">!</span>
               <p x-text="clawhubError"></p>
-              <p class="hint mt-2">ClawHub may be temporarily unavailable. The OpenClaw ecosystem is hosted at clawhub.ai.</p>
+              <p class="hint mt-2">SkillHub may be temporarily unavailable. The skill ecosystem is hosted at skillhub.tencent.com.</p>
               <button class="btn btn-ghost btn-sm mt-2" @click="clawhubSearch ? searchClawHub() : browseClawHub(clawhubSort)">Retry</button>
             </div>
 
@@ -2304,7 +2304,7 @@
                   <div class="card card-glow" @click="showSkillDetail(skill.slug)" style="cursor:pointer">
                     <div class="flex justify-between items-center mb-2">
                       <div class="card-header" style="margin:0" x-text="skill.name || skill.slug"></div>
-                      <span class="badge badge-info" style="font-size:0.6rem">ClawHub</span>
+                      <span class="badge badge-info" style="font-size:0.6rem">SkillHub</span>
                     </div>
                     <div class="card-meta" x-text="skill.description" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden"></div>
                     <div class="flex justify-between items-center mt-3">
@@ -2325,7 +2325,7 @@
                   <div class="card card-glow" @click="showSkillDetail(skill.slug)" style="cursor:pointer">
                     <div class="flex justify-between items-center mb-2">
                       <div class="card-header" style="margin:0" x-text="skill.name || skill.slug"></div>
-                      <span class="badge badge-info" style="font-size:0.6rem">ClawHub</span>
+                      <span class="badge badge-info" style="font-size:0.6rem">SkillHub</span>
                     </div>
                     <div class="card-meta" x-text="skill.description" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden"></div>
                     <div class="flex justify-between items-center mt-3">
@@ -2402,6 +2402,7 @@
                       </div>
                       <div class="text-xs" x-show="srv.transport.type === 'sse'">
                         <code x-text="srv.transport.url" style="font-size:0.7rem"></code>
+                        <span class="badge badge-success ml-1" x-show="srv.transport.has_auth" style="font-size:0.6rem">Auth</span>
                       </div>
                       <div class="text-xs text-dim mt-1" x-show="srv.env && srv.env.length" x-text="'Env: ' + srv.env.join(', ')"></div>
                     </div>
@@ -2462,7 +2463,7 @@ args = ["-y", "@modelcontextprotocol/server-filesystem", "/path"]</pre>
                     </div>
                     <div class="mb-3">
                       <div class="flex gap-2 items-center flex-wrap">
-                        <span class="badge badge-info">ClawHub</span>
+                        <span class="badge badge-info">SkillHub</span>
                         <span class="text-xs text-dim" x-show="skillDetail.version" x-text="'v' + skillDetail.version"></span>
                         <span class="text-xs" x-show="skillDetail.author_name || skillDetail.author" style="color:var(--text-dim)">
                           <span x-show="skillDetail.author_image" style="display:inline-block;vertical-align:middle;margin-right:4px"><img :src="skillDetail.author_image" style="width:16px;height:16px;border-radius:50%"></span>
@@ -2491,7 +2492,7 @@ args = ["-y", "@modelcontextprotocol/server-filesystem", "/path"]</pre>
                       </template>
                     </div>
                     <div class="flex gap-2">
-                      <button class="btn btn-primary" style="flex:1" @click="installFromClawHub(skillDetail.slug)" :disabled="installingSlug === skillDetail.slug || skillDetail.installed || isSkillInstalled(skillDetail.slug)" x-text="skillDetail.installed || isSkillInstalled(skillDetail.slug) ? 'Already Installed' : installingSlug === skillDetail.slug ? 'Installing...' : 'Install from ClawHub'"></button>
+                      <button class="btn btn-primary" style="flex:1" @click="installFromClawHub(skillDetail.slug)" :disabled="installingSlug === skillDetail.slug || skillDetail.installed || isSkillInstalled(skillDetail.slug)" x-text="skillDetail.installed || isSkillInstalled(skillDetail.slug) ? 'Already Installed' : installingSlug === skillDetail.slug ? 'Installing...' : 'Install from SkillHub'"></button>
                       <button class="btn btn-ghost" @click="viewSkillCode(skillDetail.slug)" :disabled="skillCodeLoading" x-text="skillCodeLoading ? 'Loading...' : showSkillCode ? 'Hide Code' : 'View Code'"></button>
                     </div>
                     <div x-show="showSkillCode && skillCode" x-transition class="mt-3" style="max-height:300px;overflow:auto;border:1px solid var(--border);border-radius:8px;background:var(--bg-inset)">
